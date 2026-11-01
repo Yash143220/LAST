@@ -1,4 +1,4 @@
-# Operation: Outbreak
+# LAST: Last Active Survival Tag
 
 Real-world, GPS-based multiplayer zombie survival game. Mobile-first web app (React + MapLibre) with an authoritative Node/Socket.IO server and MongoDB.
 
