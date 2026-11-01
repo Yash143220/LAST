@@ -1,0 +1,19 @@
+services:
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    volumes: [mongo-data:/data/db]
+  app:
+    build:
+      context: .
+      args:
+        VITE_OPERATOR_NAME: ${VITE_OPERATOR_NAME:-Your Company}
+        VITE_CONTACT_EMAIL: ${VITE_CONTACT_EMAIL:-support@example.com}
+    restart: unless-stopped
+    depends_on: [mongo]
+    env_file: ./server/.env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/operation_outbreak
+    ports: ["8080:8080"]
+volumes:
+  mongo-data:

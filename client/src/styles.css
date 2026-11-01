@@ -1,0 +1,52 @@
+@import 'tailwindcss';
+@import '@fontsource/barlow/400.css';
+@import '@fontsource/barlow/500.css';
+@import '@fontsource/barlow/600.css';
+@import '@fontsource/barlow-condensed/600.css';
+@import '@fontsource/barlow-condensed/700.css';
+@import 'maplibre-gl/dist/maplibre-gl.css';
+
+/* Palette: "Zombie Breath" base + two accents from the coral/teal palette (coral = danger, teal = intel). */
+@theme {
+  --color-bg: #0e231e;
+  --color-surface: #143229;
+  --color-raised: #1b4034;
+  --color-line: #2c5646;
+  --color-brand: #26a62d;
+  --color-lime: #85d950;
+  --color-text: #d7e5de;
+  --color-sage: #97b6a7;
+  --color-danger: #ed6760;
+  --color-info: #88cec6;
+  --font-display: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --font-sans: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+@layer base {
+html, body, #root { height: 100%; }
+body {
+  margin: 0; background: var(--color-bg); color: var(--color-text); font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none;
+  padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
+}
+h1, h2, h3, .font-display { font-family: var(--font-display); letter-spacing: 0.01em; }
+button, a, input, select, textarea { font: inherit; }
+:focus-visible { outline: 2px solid var(--color-lime); outline-offset: 2px; border-radius: 6px; }
+::selection { background: var(--color-brand); color: #fff; }
+}
+
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0.5rem); }
+.scroll-y { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+input[type='range'] { accent-color: var(--color-lime); }
+input[type='checkbox'] { accent-color: var(--color-brand); }
+
+.maplibregl-ctrl-attrib { background: rgba(14, 35, 30, 0.8) !important; color: var(--color-sage) !important; font-size: 10px; }
+.maplibregl-ctrl-attrib a { color: var(--color-sage) !important; }
+.pulse-ring::after { content: ''; position: absolute; inset: -8px; border-radius: 9999px; border: 2px solid var(--color-lime); animation: ring 2s ease-out infinite; }
+@keyframes ring { from { transform: scale(0.6); opacity: 0.9; } to { transform: scale(1.6); opacity: 0; } }
+@keyframes sheet { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.sheet-in { animation: sheet 0.18s ease-out; }
+@keyframes reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.reveal { animation: reveal 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+@media (prefers-reduced-motion: reduce) { *, *::after { animation: none !important; transition: none !important; } }

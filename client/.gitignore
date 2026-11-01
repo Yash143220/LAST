@@ -1,0 +1,3 @@
+node_modules
+dist
+public/maplibre-gl-worker.mjs

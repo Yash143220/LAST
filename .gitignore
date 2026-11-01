@@ -1,0 +1,4 @@
+node_modules
+dist
+.env
+client/public/maplibre-gl-worker.mjs

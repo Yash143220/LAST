@@ -1,0 +1,10 @@
+{
+  "name": "Operation: Outbreak",
+  "short_name": "Outbreak",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0E231E",
+  "theme_color": "#0E231E",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
