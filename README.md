@@ -59,4 +59,4 @@ The e2e covers: consent enforcement, host config, lobby secrecy, countdown, role
 - **Single server instance.** Rooms live in one process (snapshotted to MongoDB). To scale out, add sticky sessions + the Socket.IO Redis adapter and move room ownership to a shared store.
 - **Legal text is a template.** Terms, Privacy and Safety pages are starting points; have a lawyer review them for your jurisdiction (age limit, data-protection rules) before launch.
 - No push notifications / installable offline mode (a manifest is included so it can be added to the home screen). Camera scanning requires HTTPS.
-- Nominatim place search must respect its usage policy (light, user-triggered use only); for heavy use switch to a geocoder you host or pay for.
+- Nominatim place search must respect its usage policy (light, user-triggered use only); for heavy use switch to a geocoder you host or pay for it.
