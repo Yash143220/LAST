@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 const { setWorkerUrl } = maplibregl;
 import { Box, Compass } from 'lucide-react';
 import { C, MAP_STYLE } from '../lib/theme.js';
@@ -158,7 +159,7 @@ export default forwardRef(function MapView({
 
   return (
     <div className={`relative ${className || ''}`}>
-      <div ref={box} className="absolute inset-0 bg-bg" />
+      <div ref={box} className="absolute inset-0 bg-bg" style={{ position: 'absolute', inset: 0 }} />
       {[...markers.current.entries()].map(([id, m]) => byId.get(id) && createPortal(byId.get(id).node, m.el, id))}
       {controls && ready && (
         <div className="absolute right-3 top-3 flex flex-col gap-2 z-10">
