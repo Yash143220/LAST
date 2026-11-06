@@ -46,8 +46,10 @@ export function requireAdmin(req, res, next) {
   next();
 }
 
+export const avatarUrl = (u) => (u?.avatarVer ? `/api/avatar/${u._id ?? u.id}?v=${u.avatarVer}` : u?.photoUrl || '');
+
 export const publicUser = (u) => ({
-  id: String(u._id), email: u.email, name: u.name, displayName: u.displayName, photoUrl: u.photoUrl, avatar: u.avatar,
+  id: String(u._id), email: u.email, name: u.name, displayName: u.displayName, photoUrl: u.photoUrl, avatar: u.avatarVer ? avatarUrl(u) : '',
   role: isAdminUser(u) ? 'admin' : 'player', consents: u.consents, stats: u.stats, createdAt: u.createdAt,
   consentCurrent: u.consents?.version === config.consentVersion && u.consents?.terms && u.consents?.privacy && u.consents?.location && u.consents?.safety && u.consents?.age,
 });

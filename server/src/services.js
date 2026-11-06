@@ -1,4 +1,5 @@
-import { Game, GameResult, User, Report, Audit, Preset, Setting } from './models.js';
+import crypto from 'node:crypto';
+import { Game, GameResult, User, Report, Audit, Preset, Setting, Avatar } from './models.js';
 import { rooms, userRoom, out, snapshot, restoreRoom, leaveRoom } from './engine.js';
 
 const log = (...a) => console.log('[svc]', ...a);
@@ -33,7 +34,7 @@ export async function onFinish(room, result) {
   try {
     await GameResult.create(result);
     const ops = result.players.filter((p) => p.userId).map((p) => {
-      const won = result.winner !== 'none' && ((result.winner === 'survivors' && p.endRole === 'survivor') || (result.winner === 'zombies' && p.endRole === 'zombie'));
+      const won = !!p.won;
       const counted = result.winner !== 'none';
       return {
         updateOne: {
@@ -78,6 +79,7 @@ export async function deleteAccount(userId, disconnect) {
     Game.updateMany({ playerIds: userId }, { $pull: { playerIds: userId } }),
     Game.updateMany({ hostId: userId, status: 'finished' }, { $set: { hostId: null } }),
     Preset.deleteMany({ ownerId: userId }),
+    Avatar.deleteOne({ _id: userId }),
     Report.updateMany({ reporterId: userId }, { $set: { reporterId: null, reporterName: 'Deleted player' } }),
   ]);
   await User.deleteOne({ _id: userId });
@@ -91,4 +93,36 @@ export async function setAppSettings(patch) {
   appSettings = { ...appSettings, ...patch };
   await Setting.updateOne({ _id: 'app' }, { $set: { value: appSettings } }, { upsert: true });
   return appSettings;
+}
+
+// ---- avatars: stored once (small WebP/JPEG/PNG), served by URL with long cache headers
+const MAGIC = [
+  ['image/jpeg', (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff],
+  ['image/png', (b) => b.length > 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))],
+  ['image/webp', (b) => b.length > 12 && b.subarray(0, 4).toString() === 'RIFF' && b.subarray(8, 12).toString() === 'WEBP'],
+];
+export const sniffImage = (buf) => MAGIC.find(([, f]) => f(buf))?.[0] || null;
+
+export async function saveAvatar(userId, buf) {
+  const mime = sniffImage(buf);
+  if (!mime) throw Object.assign(new Error('Use a JPEG, PNG or WebP image.'), { status: 400 });
+  const hash = crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12);
+  await Avatar.updateOne({ _id: userId }, { $set: { mime, hash, data: buf, updatedAt: new Date() } }, { upsert: true });
+  await User.updateOne({ _id: userId }, { $set: { avatarVer: hash }, $unset: { avatar: 1 } });
+  return hash;
+}
+export async function removeAvatar(userId) {
+  await Avatar.deleteOne({ _id: userId });
+  await User.updateOne({ _id: userId }, { $set: { avatarVer: '' }, $unset: { avatar: 1 } });
+}
+
+// One-time migration of legacy inline data-URL avatars into the Avatar collection.
+export async function migrateAvatars() {
+  const legacy = await User.find({ avatar: { $nin: ['', null] } }).select('avatar').lean();
+  let n = 0;
+  for (const u of legacy) {
+    const m = /^data:image\/(?:jpeg|png|webp);base64,(.+)$/.exec(u.avatar || '');
+    try { if (m) { await saveAvatar(String(u._id), Buffer.from(m[1], 'base64')); n++; } else await User.updateOne({ _id: u._id }, { $unset: { avatar: 1 } }); } catch { /* skip bad record */ }
+  }
+  if (legacy.length) log(`migrated ${n}/${legacy.length} legacy avatars`);
 }

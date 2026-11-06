@@ -1,4 +1,4 @@
-# LAST: Last Active Survival Tag
+# Humans: The Last Alive
 
 Real-world, GPS-based multiplayer zombie survival game. Mobile-first web app (React + MapLibre) with an authoritative Node/Socket.IO server and MongoDB.
 
@@ -43,10 +43,31 @@ The server refuses to start in production without `JWT_SECRET` and `GOOGLE_CLIEN
 - **Map:** MapLibre GL JS v6 with free OpenFreeMap vector tiles (OpenStreetMap data, no API key, 3D buildings, tilt toggle). Override the style with `VITE_MAP_STYLE`.
 - **Hardening:** helmet CSP/COOP/permissions-policy, same-origin check on writes + SameSite cookies, rate limits (HTTP and per-socket), schema validation (zod), payload limits, one active game per user, capacity cap (`MAX_ROOMS`), signed sessions invalidated on suspend/sign-out-all, TTL indexes for retention (reports 180 d, results/audit 1 y). `npm audit` shows 0 vulnerabilities.
 
+## Rules added in v1.1
+
+- **Hide phase** (default 90 s, host-adjustable 0-300): zombies cannot infect and get no hints; at release they get one short first hint (default 10 s, 5-60), then the normal hint timing starts. Zombies who wander off their start point get a warning.
+- **Individual extraction:** each survivor escapes on their own after holding inside the extraction radius (60-180 s, default 60). Escaped players are safe and spectate. The match ends when no survivor is left in play or time runs out.
+- **Outcome-based result:** survivors win when escaped + still-alive survivors reach the host's percentage (default 50%). Zombie wins are shared with infected players, whose bonus is scaled by how long they lasted. Survivors who escaped on a losing team keep a consolation bonus. Leaderboard shows an MVP.
+- **Mission time** 60-300 s (default 120). Shorter values (down to 10 s) only when practice mode (simulated GPS) is on.
+- **Objectives glow** on the map while a survivor is working on them (progress ring, no names). "Noisy objectives" toggle controls whether zombies can see it.
+- **Supplies:** keep credits (default) or switch to **free pickups** with limited, refilling stock.
+- **Avatars** are stored once in their own collection (~128 px WebP, a few KB), served by URL with long cache headers, and never embedded in game state or match results. Old inline avatars are migrated automatically at startup.
+- Screen-awake status is shown in game; a warning appears if the phone may sleep. A web page cannot track GPS while the screen is off or the app is in the background.
+
+## Changes in v1.2
+
+- **Renamed** to *Humans: The Last Alive*.
+- **Push-to-talk radio:** hold the mic button to talk. Survivors hear survivors, zombies hear zombies; a survivor who is infected joins the zombie channel; someone who is infected but holding an antidote (incubating) is on no channel. One speaker per channel at a time. Audio is relayed live by the server (8 kHz, about 8 KB/s per speaker), never recorded or stored. Needs HTTPS and microphone permission; the consent text and Privacy page were updated, so players are asked to accept again once.
+- **Shield:** absorbs one infection attempt (60 s limit), then breaks. That zombie cannot retry that survivor for 30 s, and the survivor is alerted. A new shield can be used or bought 3 minutes after the previous one was activated.
+- **Antidote (200 credits):** a holder who is infected has 2 minutes to drink it. During that time the zombie is not told, the survivor can still do missions (not extraction), and neither radio channel is available. Drinking cures them, gives 30 s of protection, and all zombies get "X used an antidote". If they do not drink, they turn and the zombie is paid only then.
+- **Zombies:** no Supplies tab. The Missions tab is a "mission watch": pins glow while a survivor works on them and the panel shows the time left (when "noisy objectives" is on).
+- **Dark map** with a day/night toggle (the light OpenFreeMap style is recoloured in the browser to match the game palette; if the style cannot be processed the original is used).
+- **Announcements** from the admin console now appear as a notice below the game HUD (and inline on the home page), never over the game controls.
+
 ## Tests
 
 ```bash
-npm test                                    # 15 engine rule tests (no DB needed)
+npm test                                    # 24 engine rule tests (no DB needed)
 # with the server + MongoDB running:
 npm --prefix server run test:e2e            # live REST + Socket.IO end-to-end flow
 ```
@@ -59,4 +80,4 @@ The e2e covers: consent enforcement, host config, lobby secrecy, countdown, role
 - **Single server instance.** Rooms live in one process (snapshotted to MongoDB). To scale out, add sticky sessions + the Socket.IO Redis adapter and move room ownership to a shared store.
 - **Legal text is a template.** Terms, Privacy and Safety pages are starting points; have a lawyer review them for your jurisdiction (age limit, data-protection rules) before launch.
 - No push notifications / installable offline mode (a manifest is included so it can be added to the home screen). Camera scanning requires HTTPS.
-- Nominatim place search must respect its usage policy (light, user-triggered use only); for heavy use switch to a geocoder you host or pay for it.
+- Nominatim place search must respect its usage policy (light, user-triggered use only); for heavy use switch to a geocoder you host or pay for.

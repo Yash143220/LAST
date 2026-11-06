@@ -12,7 +12,7 @@ import { config } from './config.js';
 import { api } from './routes/api.js';
 import { admin } from './routes/admin.js';
 import { initSockets, startLoop } from './sockets.js';
-import { restoreRooms, flushAll, loadAppSettings } from './services.js';
+import { restoreRooms, flushAll, loadAppSettings, migrateAvatars } from './services.js';
 import { rooms } from './engine.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,7 +41,7 @@ app.use(helmet({
     },
   },
 }));
-app.use((req, res, next) => { res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(self), microphone=()'); next(); });
+app.use((req, res, next) => { res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(self), microphone=(self)'); next(); });
 app.use(compression());
 app.use(express.json({ limit: '160kb' }));
 app.use(cookieParser());
@@ -79,6 +79,7 @@ async function main() {
   await mongoose.connect(config.mongoUri, { serverSelectionTimeoutMS: 10_000, maxPoolSize: 20 });
   console.log('[db] connected');
   await loadAppSettings();
+  await migrateAvatars();
   await restoreRooms();
   const loop = startLoop();
   server.listen(config.port, () => console.log(`[server] listening on :${config.port} (${config.isProd ? 'production' : 'development'})`));

@@ -124,12 +124,13 @@ export function Confirm({ open, title, body, confirmLabel = 'Confirm', danger, o
   );
 }
 
-export function Toasts({ toasts }) {
+export function Toasts({ toasts, inMatch }) {
+  // In a match the HUD sits at the top, so toasts drop below it instead of covering it.
   return (
-    <div className="fixed z-[60] top-0 inset-x-0 safe-top px-3 pt-2 pointer-events-none flex flex-col items-center gap-2" aria-live="polite">
+    <div className={cx('fixed z-[60] inset-x-0 px-3 pointer-events-none flex flex-col items-center gap-2', inMatch ? 'top-[calc(env(safe-area-inset-top)+5.75rem)]' : 'top-0 safe-top pt-2')} aria-live="polite">
       {toasts.map((t) => (
         <div key={t.id} className={cx('sheet-in pointer-events-auto max-w-md w-full rounded-xl px-4 py-3 text-sm shadow-xl border',
-          { info: 'bg-surface border-line', good: 'bg-[#1d5a28] border-brand', warn: 'bg-[#4a3d12] border-[#f2c14e]/60', danger: 'bg-[#5a1f1c] border-danger' }[t.kind] || 'bg-surface border-line')}>{t.msg}</div>
+          { info: 'bg-surface border-line', good: 'bg-[#1d5a28] border-brand', warn: 'bg-[#4a3d12] border-[#f2c14e]/60', danger: 'bg-[#5a1f1c] border-danger', announce: 'bg-[#16414a] border-info' }[t.kind] || 'bg-surface border-line')}>{t.kind === 'announce' && <b className="text-info mr-1">Announcement:</b>}{t.msg}</div>
       ))}
     </div>
   );

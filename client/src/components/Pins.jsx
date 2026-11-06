@@ -5,13 +5,16 @@ const MI = { comms: Antenna, medical: Cross, power: Zap, signal: Radio, rescue: 
 export const MissionIcon = ({ type, ...p }) => { const I = MI[type] || Flag; return <I {...p} />; };
 
 const base = 'grid place-items-center rounded-full border-2 shadow-lg';
-export function CheckpointPin({ cp, done, selected, unsafe, dim }) {
+export function CheckpointPin({ cp, done, selected, unsafe, dim, busy, pct = 0, tone }) {
   const color = cp.kind === 'extraction' ? C.info : cp.kind === 'supply' ? '#f2c14e' : C.lime;
   const bg = !cp.active || dim ? '#3a4f47' : done ? '#2c5646' : C.bg;
+  const t = tone || C.info;
   return (
     <div className="flex flex-col items-center" style={{ opacity: cp.active ? 1 : 0.55 }}>
+      <div className={busy ? 'pin-busy rounded-full p-1' : ''} style={busy ? { '--glow': t, background: `conic-gradient(${t} ${Math.round(pct * 360)}deg, rgba(14,35,30,.9) 0)` } : undefined}>
       <div className={base} style={{ width: selected ? 40 : 34, height: selected ? 40 : 34, background: bg, borderColor: unsafe ? C.danger : selected ? '#fff' : color, borderStyle: cp.approved ? 'solid' : 'dashed', color }}>
         {done ? <Check size={18} /> : cp.kind === 'mission' ? <MissionIcon type={cp.missionType} size={17} /> : cp.kind === 'supply' ? <Package size={17} /> : <Flag size={17} />}
+      </div>
       </div>
     </div>
   );

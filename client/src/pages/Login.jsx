@@ -62,7 +62,7 @@ export default function Login() {
           <circle cx="60" cy="60" r="18" fill="none" stroke="#85d950" strokeWidth="3" /><circle cx="60" cy="60" r="5" fill="#ed6760" />
           <path d="M60 60 L104 36" stroke="#85d950" strokeWidth="2" opacity=".7" />
         </svg>
-        <h1 className="font-display font-bold text-5xl leading-[0.95] text-text">Operation:<br /><span className="text-lime">Outbreak</span></h1>
+        <h1 className="font-display font-bold text-5xl leading-[0.95] text-text">Humans:<br /><span className="text-lime">The Last Alive</span></h1>
         <p className="mt-3 text-sage text-lg max-w-sm">A real-world survival game for your phone. Survivors race between outdoor checkpoints. Zombies hunt them down. Walk, don't run.</p>
 
         <div className="mt-8 rounded-2xl bg-surface border border-line p-5 space-y-5">

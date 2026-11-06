@@ -1,10 +1,10 @@
 import { Server } from 'socket.io';
 import { parse as parseCookie } from 'cookie';
 import { config } from './config.js';
-import { COOKIE, userFromToken, isAdminUser } from './auth.js';
+import { COOKIE, userFromToken, isAdminUser, avatarUrl } from './auth.js';
 import {
   rooms, userRoom, out, addPlayer, setConnected, setReady, leaveRoom, startGame, pause, resume, terminate, updateLocation,
-  startActivity, cancelActivity, buyItem, useItem, requestInfection, confirmInfection, tick, janitor, viewFor,
+  startActivity, cancelActivity, buyItem, useItem, requestInfection, confirmInfection, tick, janitor, viewFor, channelOf, channelMembers,
 } from './engine.js';
 import { persist, onFinish, saveRoom, createReport } from './services.js';
 import { cleanText } from './schemas.js';
@@ -20,6 +20,9 @@ export function disconnectUser(userId) {
 }
 
 const emitUser = (userId, event, payload) => { for (const s of userSockets.get(userId) || []) s.emit(event, payload); };
+const emitUserVolatile = (userId, event, payload) => { for (const s of userSockets.get(userId) || []) s.volatile.emit(event, payload); };
+const VOICE_IDLE_MS = 1200;      // a talker who sends nothing for this long loses the floor
+const VOICE_MAX_MS = 30_000;     // maximum length of one transmission
 
 function broadcast(room) {
   const now = Date.now();
@@ -66,7 +69,7 @@ export function initSockets(httpServer) {
       const user = await userFromToken(cookies[COOKIE]);
       if (!user) return next(new Error('unauthorized'));
       if (user.suspended) return next(new Error('suspended'));
-      socket.data.user = { id: String(user._id), displayName: user.displayName, avatar: user.avatar, photoUrl: user.photoUrl, admin: isAdminUser(user) };
+      socket.data.user = { id: String(user._id), displayName: user.displayName, avatar: user.avatarVer ? avatarUrl(user) : '', photoUrl: user.photoUrl, admin: isAdminUser(user) };
       next();
     } catch { next(new Error('unauthorized')); }
   });
@@ -161,6 +164,34 @@ export function initSockets(httpServer) {
       return { ok: true, paused };
     }), [1, 3]);
 
+    // push-to-talk radio: one speaker per channel at a time, relayed live, never stored
+    const releaseFloor = (r) => {
+      for (const [ch, f] of Object.entries(r.voice || {})) {
+        if (f.id !== user.id) continue;
+        delete r.voice[ch];
+        for (const m of channelMembers(r, ch)) if (m.id !== user.id) emitUser(m.id, 'voice:idle', { id: user.id });
+      }
+    };
+    on('voice:start', needRoom((r) => {
+      const p = r.players[user.id]; const ch = channelOf(r, p);
+      if (!ch) return { ok: false, error: 'No radio channel right now.', code: 'NO_CHANNEL' };
+      const f = (r.voice ||= {})[ch]; const now = Date.now();
+      if (f && f.id !== user.id && now - f.at < VOICE_IDLE_MS) return { ok: false, error: `${r.players[f.id]?.name || 'Someone'} is talking.`, code: 'BUSY' };
+      r.voice[ch] = { id: user.id, at: now, start: now };
+      for (const m of channelMembers(r, ch)) if (m.id !== user.id) emitUser(m.id, 'voice:talking', { id: user.id, name: p.name });
+      return { ok: true, channel: ch };
+    }), [2, 6]);
+    on('voice:chunk', needRoom((r, { d }) => {
+      const ch = channelOf(r, r.players[user.id]); const f = ch && r.voice?.[ch];
+      if (!f || f.id !== user.id || !Buffer.isBuffer(d) || d.length < 1 || d.length > 2000) return { ok: false };
+      const now = Date.now();
+      if (now - f.start > VOICE_MAX_MS) { releaseFloor(r); return { ok: false, error: 'Transmission too long.' }; }
+      f.at = now;
+      for (const m of channelMembers(r, ch)) if (m.id !== user.id) emitUserVolatile(m.id, 'voice:chunk', { id: user.id, d });
+      return { ok: true };
+    }), [20, 50]);
+    on('voice:end', needRoom((r) => { releaseFloor(r); return { ok: true }; }), [4, 10]);
+
     // admin spectator
     on('admin:watch', ({ code }) => {
       if (!user.admin) return { ok: false, error: 'Forbidden.' };
@@ -181,7 +212,7 @@ export function initSockets(httpServer) {
       if (set && set.size === 0) {
         userSockets.delete(user.id);
         const r = room();
-        if (r && r.players[user.id]) { setConnected(r, user.id, false); }
+        if (r && r.players[user.id]) { setConnected(r, user.id, false); releaseFloor(r); }
       }
     });
 

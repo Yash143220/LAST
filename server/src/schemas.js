@@ -35,9 +35,17 @@ export const settingsSchema = z.object({
   revealIntervalSec: z.number().int().min(30).max(300),
   hintRadius: z.number().int().min(30).max(150),
   requiredMissions: z.number().int().min(1).max(5),
-  missionHoldSec: z.number().int().min(5).max(60),
-  extractionHoldSec: z.number().int().min(10).max(60),
+  missionHoldSec: z.number().int().min(10).max(300),
+  extractionHoldSec: z.number().int().min(10).max(180),
   extractionWindowMin: z.number().int().min(1).max(15),
+  hideSec: z.number().int().min(0).max(300),
+  firstHintSec: z.number().int().min(5).max(60),
+  hintVisibleSec: z.number().int().refine((v) => v === 0 || (v >= 10 && v <= 120), 'Use 0 (until the next scan) or 10-120 s.'),
+  noisyObjectives: z.boolean(),
+  survivorWinPercent: z.number().int().min(1).max(100),
+  supplyMode: z.enum(['credits', 'free']),
+  supplyStock: z.number().int().min(1).max(10),
+  supplyRefillSec: z.number().int().min(60).max(600),
   graceSec: z.number().int().min(15).max(180),
   zonePenalty: z.enum(['infect', 'warn']),
   maxAccuracy: z.number().int().min(10).max(60),
@@ -48,10 +56,13 @@ export const settingsSchema = z.object({
   countdownSec: z.number().int().min(5).max(30),
   hostSafetyConfirmed: z.boolean(),
 }).refine((s) => s.zombieCount < s.maxPlayers, { message: 'Zombies must be fewer than max players.' })
-  .refine((s) => s.extractionWindowMin * 2 <= s.durationMin, { message: 'Extraction window must be at most half the match.' });
+  .refine((s) => s.extractionWindowMin * 2 <= s.durationMin, { message: 'Extraction window must be at most half the match.' })
+  .refine((s) => s.allowSimGps || s.missionHoldSec >= 60, { message: 'Mission time must be at least 60 s (shorter only in practice mode).' })
+  .refine((s) => s.allowSimGps || s.extractionHoldSec >= 60, { message: 'Extraction time must be at least 60 s (shorter only in practice mode).' })
+  .refine((s) => s.hideSec * 1000 <= (s.durationMin * 60_000) / 2, { message: 'Hide phase must be at most half the match.' });
 
 export const DEFAULT_SETTINGS = {
-  name: 'Operation Outbreak',
+  name: 'Humans: The Last Alive',
   maxPlayers: 10,
   zombieCount: 2,
   durationMin: 30,
@@ -62,9 +73,17 @@ export const DEFAULT_SETTINGS = {
   revealIntervalSec: 120,
   hintRadius: 60,
   requiredMissions: 3,
-  missionHoldSec: 20,
-  extractionHoldSec: 30,
+  missionHoldSec: 120,
+  extractionHoldSec: 60,
   extractionWindowMin: 5,
+  hideSec: 90,
+  firstHintSec: 10,
+  hintVisibleSec: 0,
+  noisyObjectives: true,
+  survivorWinPercent: 50,
+  supplyMode: 'credits',
+  supplyStock: 3,
+  supplyRefillSec: 180,
   graceSec: 60,
   zonePenalty: 'infect',
   maxAccuracy: 30,

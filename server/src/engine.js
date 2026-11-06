@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import { config } from './config.js';
 import {
-  MISSIONS, ITEMS, SHIELD_MS, ENERGY_MS, ANTIDOTE_MS, RADAR_MS, RADAR_RANGE, SUPPLY_COOLDOWN_MS,
+  MISSIONS, ITEMS, SHIELD_MS, ENERGY_MS, ANTIDOTE_MS, ANTIDOTE_WINDOW_MS, SHIELD_COOLDOWN_MS, ZOMBIE_LOCK_MS, RADAR_MS, RADAR_RANGE, SUPPLY_COOLDOWN_MS,
   START_CREDITS, FIX_FRESH_MS, HINT_FRESH_MS, ZONE_STAGES, GAME_RETENTION_MS,
 } from './constants.js';
 import { haversine, inShape, scaledShape, areaCenter, randomPointNear } from './geo.js';
@@ -37,6 +37,7 @@ export const elapsed = (room, now = Date.now()) => {
   return Math.max(0, end - room.startedAt - room.pausedTotal);
 };
 const durationMs = (room) => room.settings.durationMin * 60_000;
+const hideMs = (room) => (room.settings.hideSec || 0) * 1000;
 
 function ev(room, msg, { type = 'info', aud = 'all', now = Date.now() } = {}) {
   room.events.push({ id: rid(4), t: elapsed(room, now), type, msg, aud });
@@ -56,7 +57,8 @@ function newPlayer(user) {
     score: 0, credits: START_CREDITS, missions: [], inventory: { shield: 0, radar: 0, energy: 0, medkit: 0 },
     bought: { shield: 0, radar: 0, energy: 0, medkit: 0 }, supplyCd: {},
     shieldUntil: 0, energyUntil: 0, radar: null, activity: null, outSince: null,
-    infections: 0, extracted: false, flags: { sim: false, jumps: 0 }, infectCd: 0, confirmFails: 0, lockUntil: 0,
+    incubateUntil: 0, incubatedBy: null, shieldReadyAt: 0, locks: {},
+    infections: 0, extracted: false, infectedEl: 0, homeLoc: null, homeWarnAt: 0, flags: { sim: false, jumps: 0 }, infectCd: 0, confirmFails: 0, lockUntil: 0,
   };
 }
 
@@ -232,8 +234,11 @@ function beginRunning(room, now) {
   room.status = 'running';
   room.startedAt = now;
   room.pausedTotal = 0;
-  room.hints = { at: 0, nextAt: room.settings.revealIntervalSec * 1000, zombie: [], survivor: [] };
-  ev(room, 'Match started. Survivors: complete missions and reach extraction. Move calmly - no running.', { type: 'start', now });
+  room.hints = { at: 0, nextAt: hideMs(room) || room.settings.revealIntervalSec * 1000, zombie: [], survivor: [], first: hideMs(room) > 0 };
+  room.supplyStock = {};
+  for (const c of room.checkpoints) if (c.kind === 'supply' && c.active && c.approved) room.supplyStock[c.id] = { n: room.settings.supplyStock, next: 0 };
+  room.hideAnnounced = !hideMs(room);
+  ev(room, hideMs(room) ? `Match started. Zombies are held back for ${Math.round(hideMs(room) / 1000)} s - survivors, move and hide. Walk, never run.` : 'Match started. Survivors: complete missions and reach extraction. Move calmly - no running.', { type: 'start', now });
   room.dirty = true;
   out.persist(room, true);
 }
@@ -331,6 +336,7 @@ export function startActivity(room, userId, cpId) {
   if (cp.kind === 'mission') {
     if (room.missionsDone[cp.missionType]) return fail('That mission is already complete.');
   } else {
+    if (p.incubateUntil > el) return fail('You are infected. Drink your Antidote first - you cannot extract.');
     if (!extractionOpen(room, el)) return fail('Extraction is not open yet.');
     if (missionsDoneCount(room) < room.settings.requiredMissions) return fail(`Complete ${room.settings.requiredMissions} missions first.`);
   }
@@ -372,9 +378,10 @@ function completeActivity(room, p, el, now) {
       }
     }
   } else {
-    p.extracted = true; p.score += 150;
-    ev(room, `${p.name} reached extraction!`, { type: 'extraction', now });
-    finish(room, 'survivors', 'extraction', now);
+    p.extracted = true; p.score += 150; p.status = 'ESCAPED'; p.escapedEl = el; p.radar = null;
+    ev(room, `${p.name} escaped through extraction!`, { type: 'extraction', now });
+    out.toUser(room, p.id, 'toast', { kind: 'good', msg: 'You escaped! You are safe. Stay and watch the rest of the match.' });
+    checkWin(room, now);
   }
 }
 
@@ -386,12 +393,20 @@ export function buyItem(room, userId, cpId, item) {
   const def = ITEMS[item];
   const cp = room.checkpoints.find((c) => c.id === cpId && c.kind === 'supply' && c.active && c.approved);
   if (!def || !cp) return fail('Unknown supply.');
+  if (item === 'shield' && p.shieldReadyAt > elapsed(room)) return fail(`Shield recharging (${Math.ceil((p.shieldReadyAt - elapsed(room)) / 1000)} s).`);
   if (!present(room, p, cp)) return fail('Move inside the supply checkpoint radius.', 'RANGE');
   const el = elapsed(room);
   if ((p.supplyCd[cpId] || 0) > el) return fail(`Supply point cooling down (${Math.ceil((p.supplyCd[cpId] - el) / 1000)}s).`);
   if (p.bought[item] >= def.limit) return fail(`Limit reached for ${def.name}.`);
-  if (p.credits < def.cost) return fail('Not enough credits. Complete missions to earn more.');
-  p.credits -= def.cost; p.bought[item]++; p.inventory[item]++;
+  if (room.settings.supplyMode === 'free') {
+    const st = (room.supplyStock ||= {})[cpId] ||= { n: room.settings.supplyStock, next: 0 };
+    if (st.n <= 0) return fail(`Supply point is empty. Restocks in about ${Math.max(1, Math.ceil((st.next - el) / 1000))} s.`, 'EMPTY');
+    if (st.n === room.settings.supplyStock) st.next = el + room.settings.supplyRefillSec * 1000;
+    st.n--; p.bought[item]++; p.inventory[item]++;
+  } else {
+    if (p.credits < def.cost) return fail('Not enough credits. Complete missions to earn more.');
+    p.credits -= def.cost; p.bought[item]++; p.inventory[item]++;
+  }
   p.supplyCd[cpId] = el + SUPPLY_COOLDOWN_MS;
   room.dirty = true;
   return ok();
@@ -403,14 +418,24 @@ export function useItem(room, userId, item) {
   if (p.team !== 'survivor' || p.status !== 'ALIVE') return fail('Only active survivors can use items.');
   if (!(p.inventory[item] > 0)) return fail('You do not have that item.');
   const el = elapsed(room);
-  if (item === 'shield') { if (p.shieldUntil > el) return fail('Shield already active.'); p.shieldUntil = el + SHIELD_MS; }
+  if (item === 'shield') {
+    if (p.shieldUntil > el) return fail('Shield already active.');
+    if (p.shieldReadyAt > el) return fail(`Shield recharging (${Math.ceil((p.shieldReadyAt - el) / 1000)} s).`);
+    p.shieldUntil = el + SHIELD_MS; p.shieldReadyAt = el + SHIELD_COOLDOWN_MS;
+  }
   else if (item === 'energy') { if (p.energyUntil > el) return fail('Energy Pack already active.'); p.energyUntil = el + ENERGY_MS; }
   else if (item === 'radar') {
     if (!fresh(room, p)) return fail('Radar needs an accurate GPS fix.', 'GPS');
     const list = zombies(room).filter((z) => fresh(room, z, HINT_FRESH_MS) && haversine(z.loc, p.loc) <= RADAR_RANGE)
       .map((z) => ({ id: rid(4), ...randomPointNear(z.loc, 20), r: 35 }));
     p.radar = { until: el + RADAR_MS, list, at: el };
-  } else return fail('That item is used automatically.');
+  } else if (item === 'medkit') {
+    if (!(p.incubateUntil > el)) return fail('The Antidote only works after you have been infected.');
+    p.incubateUntil = 0; p.incubatedBy = null; p.shieldUntil = el + ANTIDOTE_MS;
+    ev(room, `${p.name} used an antidote and is no longer infected.`, { type: 'antidote', aud: 'zombie' });
+    for (const q of zombies(room)) out.toUser(room, q.id, 'toast', { kind: 'warn', msg: `${p.name} used an antidote and was cured.` });
+    out.toUser(room, p.id, 'toast', { kind: 'good', msg: 'Cured! You are protected for 30 seconds. Run!' });
+  } else return fail('Unknown item.');
   p.inventory[item]--;
   room.dirty = true;
   return ok();
@@ -425,11 +450,13 @@ export function requestInfection(room, zombieId, now = Date.now()) {
   const z = room.players[zombieId];
   if (!z || room.status !== 'running') return fail('Not available.');
   if (z.team !== 'zombie' || !isActive(z)) return fail('Only zombies can infect.');
+  { const left = hideMs(room) - elapsed(room, now); if (left > 0) return fail(`Hide phase: zombies are released in ${Math.ceil(left / 1000)} s.`, 'HIDE'); }
   const existing = Object.values(room.tokens).find((t) => t.zombieId === zombieId && !t.used && t.expiresAt > now);
   if (existing) return fail('An infection attempt is already active. Scan the survivor\'s QR code.', 'ACTIVE');
   if (z.infectCd > now) return fail(`Wait ${Math.ceil((z.infectCd - now) / 1000)}s before trying again.`, 'COOLDOWN');
   if (!fresh(room, z, FIX_FRESH_MS, now)) return fail('Waiting for an accurate GPS fix. Move into the open.', 'GPS');
-  const cands = survivorsAlive(room).filter((s) => fresh(room, s, 30_000, now))
+  const el0 = elapsed(room, now);
+  const cands = survivorsAlive(room).filter((s) => fresh(room, s, 30_000, now) && !(s.incubateUntil > el0) && !((z.locks[s.id] || 0) > now))
     .map((s) => ({ s, d: effDist(z, s) })).filter((x) => x.d <= room.settings.infectionRange).sort((a, b) => a.d - b.d);
   z.infectCd = now + 4000;
   if (!cands.length) return fail('No survivor detected within infection range.', 'NO_TARGET');
@@ -437,8 +464,10 @@ export function requestInfection(room, zombieId, now = Date.now()) {
   const target = cands.find((c) => !Object.values(room.tokens).some((t) => t.survivorId === c.s.id && !t.used && t.expiresAt > now))?.s;
   if (!target) return fail('Target is already being engaged. Try again shortly.', 'BUSY');
   if (target.shieldUntil > el) {
-    out.toUser(room, target.id, 'toast', { kind: 'good', msg: 'Your shield blocked an infection attempt.' });
-    ev(room, 'A shield blocked an infection attempt.', { type: 'block', aud: target.id, now });
+    target.shieldUntil = 0; z.locks[target.id] = now + ZOMBIE_LOCK_MS;   // the shield absorbs one attempt and breaks
+    out.toUser(room, target.id, 'toast', { kind: 'good', msg: 'Your shield absorbed an infection attempt and broke. Run!' });
+    ev(room, 'Your shield absorbed an infection attempt and broke.', { type: 'block', aud: target.id, now });
+    room.dirty = true;
     return fail('No survivor detected within infection range.', 'NO_TARGET'); // do not reveal protection to the zombie
   }
   const token = rid(12);
@@ -476,21 +505,30 @@ export function confirmInfection(room, zombieId, raw, now = Date.now()) {
   if (!fresh(room, z, 30_000, now) || !fresh(room, s, 30_000, now)) return fail('GPS fix too old to verify proximity.', 'GPS');
   if (effDist(z, s) > room.settings.infectionRange * 2) return fail('You are no longer close enough to the survivor.', 'RANGE');
   const el = elapsed(room, now);
-  if (s.shieldUntil > el) return fail('Infection blocked.', 'BLOCKED');
-  if (s.inventory.medkit > 0) {
-    s.inventory.medkit--; s.shieldUntil = el + ANTIDOTE_MS;
-    out.toUser(room, s.id, 'toast', { kind: 'good', msg: 'Antidote used - infection cancelled!' });
-    ev(room, `${s.name}'s antidote cancelled an infection.`, { type: 'block', now });
+  if (s.shieldUntil > el) {
+    s.shieldUntil = 0; z.locks[s.id] = now + ZOMBIE_LOCK_MS;
+    out.toUser(room, s.id, 'toast', { kind: 'good', msg: 'Your shield absorbed an infection attempt and broke. Run!' });
     room.dirty = true;
-    return ok({ resisted: true });
+    return fail('Infection blocked.', 'BLOCKED');
+  }
+  if (s.incubateUntil > el) return fail('The target is no longer a survivor.', 'GONE');
+  if (s.inventory.medkit > 0) {
+    // Antidote holder: infected but not turned yet. The zombie is NOT told. Points are paid only if they actually turn.
+    s.incubateUntil = el + ANTIDOTE_WINDOW_MS; s.incubatedBy = z.id;
+    if (s.activity?.kind === 'extraction') s.activity = null;
+    out.toUser(room, s.id, 'toast', { kind: 'danger', msg: 'You are infected! Drink your Antidote within 2:00 or you turn into a zombie.' });
+    ev(room, 'You are infected. Drink your Antidote within 2 minutes or you turn.', { type: 'info', aud: s.id, now });
+    room.dirty = true;
+    return ok({ infected: true, name: s.name });
   }
   infect(room, s, z, 'scan', now);
   return ok({ infected: true, name: s.name });
 }
 
 function infect(room, s, by, how, now = Date.now()) {
+  s.infectedEl = elapsed(room, now); s.incubateUntil = 0; s.incubatedBy = null;
   s.status = 'INFECTED'; s.team = 'zombie'; s.activity = null; s.outSince = null; s.radar = null;
-  if (by) { by.infections++; by.score += 100; }
+  if (by) { by.infections++; by.score += 100; out.toUser(room, by.id, 'toast', { kind: 'good', msg: `${s.name} is now a zombie. +100` }); }
   const msg = how === 'zone' ? `${s.name} was overcome outside the safe zone and is now infected.` : `${s.name} was infected.`;
   ev(room, msg, { type: 'infect', now });
   out.toUser(room, s.id, 'toast', { kind: 'danger', msg: 'You are infected. You now hunt for the zombies.' });
@@ -506,16 +544,30 @@ function reveal(room, el) {
   const now = Date.now();
   const sv = survivorsAlive(room).filter((p) => fresh(room, p, HINT_FRESH_MS, now) || (p.loc && now - p.loc.at <= HINT_FRESH_MS));
   const zb = zombies(room).filter((p) => p.loc && now - p.loc.at <= HINT_FRESH_MS);
-  room.hints = { at: el, nextAt: el + s.revealIntervalSec * 1000, zombie: sv.map(hint), survivor: zb.map(hint) };
-  ev(room, 'Location scan complete. Hints updated.', { type: 'reveal', aud: 'zombie' });
-  if (s.revealToSurvivors) ev(room, 'Threat scan complete. Zombie hints updated.', { type: 'reveal', aud: 'survivor' });
+  const first = !!room.hints.first;
+  const until = first ? el + s.firstHintSec * 1000 : s.hintVisibleSec > 0 ? el + s.hintVisibleSec * 1000 : null;
+  const h = (p) => ({ ...hint(p), until });
+  room.hints = { at: el, nextAt: el + s.revealIntervalSec * 1000, zombie: sv.map(h), survivor: zb.map(h), first: false };
+  ev(room, first ? `Hide phase over. First location scan: visible for ${s.firstHintSec} s.` : 'Location scan complete. Hints updated.', { type: 'reveal', aud: 'zombie' });
+  if (s.revealToSurvivors) ev(room, first ? 'Zombies are released. First threat scan.' : 'Threat scan complete. Zombie hints updated.', { type: 'reveal', aud: 'survivor' });
 }
 
 // ---------------------------------------------------------------- tick / win
+// Individual outcomes decide the team result: survivors win when enough of them escaped or survived.
+function evaluate(room, now, timeUp) {
+  const all = Object.values(room.players);
+  const n0 = all.filter((p) => p.origin === 'survivor').length;
+  const escaped = all.filter((p) => p.status === 'ESCAPED').length;
+  const alive = survivorsAlive(room).length;
+  const succeeded = escaped + alive;
+  const needed = Math.max(1, Math.ceil((n0 * room.settings.survivorWinPercent) / 100));
+  if (succeeded >= needed) return finish(room, 'survivors', alive > 0 || timeUp ? 'time' : 'extraction', now);
+  return finish(room, 'zombies', succeeded > 0 ? 'too_few' : 'all_infected', now);
+}
 export function checkWin(room, now = Date.now()) {
   if (room.status !== 'running' && room.status !== 'paused') return;
-  if (survivorsAlive(room).length === 0) return finish(room, 'zombies', 'all_infected', now);
-  if (room.status === 'running' && elapsed(room, now) >= durationMs(room)) return finish(room, 'survivors', 'time', now);
+  if (survivorsAlive(room).length === 0) return evaluate(room, now, false);
+  if (room.status === 'running' && elapsed(room, now) >= durationMs(room)) return evaluate(room, now, true);
 }
 
 export function tick(room, now = Date.now()) {
@@ -535,9 +587,19 @@ export function tick(room, now = Date.now()) {
     ev(room, `Extraction is open for the final ${room.settings.extractionWindowMin} minutes.`, { type: 'extraction', now });
   }
   const s = room.settings;
+  const inHide = el < hideMs(room);
+  if (!room.hideAnnounced && !inHide) { room.hideAnnounced = true; ev(room, 'Hide phase over. Zombies are released.', { type: 'release', now }); for (const p of Object.values(room.players)) if (p.team === 'zombie') out.toUser(room, p.id, 'toast', { kind: 'danger', msg: 'You are released. Hunt!' }); }
+  for (const [cid, st] of Object.entries(room.supplyStock || {})) {
+    if (st.n < s.supplyStock && el >= st.next) { st.n++; st.next = el + s.supplyRefillSec * 1000; }
+  }
   for (const p of Object.values(room.players)) {
     if (!isActive(p)) continue;
+    if (inHide && p.team === 'zombie' && p.status === 'ALIVE' && p.loc) {
+      if (!p.homeLoc) p.homeLoc = { lat: p.loc.lat, lng: p.loc.lng };
+      else if (haversine(p.homeLoc, p.loc) > 40 && now - p.homeWarnAt > 15_000) { p.homeWarnAt = now; out.toUser(room, p.id, 'toast', { kind: 'warn', msg: 'Hide phase: stay at your starting point until zombies are released.' }); }
+    }
     if (p.radar && p.radar.until <= el) p.radar = null;
+    if (p.incubateUntil && el >= p.incubateUntil && p.status === 'ALIVE') { infect(room, p, room.players[p.incubatedBy] || null, 'incubation', now); continue; }
     // signal-loss forfeit
     if (s.forfeitSignalLossSec && p.team === 'survivor' && p.status === 'ALIVE' && el - p.lastLocEl > s.forfeitSignalLossSec * 1000) {
       p.status = 'OUT'; p.activity = null;
@@ -571,11 +633,22 @@ function finish(room, winner, reason, now = Date.now()) {
   const wasRunning = room.status === 'running' || room.status === 'paused';
   if (room.status === 'paused') { room.pausedTotal += now - room.pausedAt; room.pausedAt = 0; }
   room.status = 'finished'; room.endedAt = now; room.winner = winner; room.reason = reason;
+  const dur = durationMs(room);
   const players = Object.values(room.players).map((p) => {
-    let bonus = 0;
-    if (winner !== 'none' && p.team === (winner === 'survivors' ? 'survivor' : 'zombie') && p.status !== 'LEFT') bonus = 100;
+    // outcome: what happened to this player personally
+    let outcome = p.status === 'LEFT' ? 'LEFT' : p.status === 'OUT' ? 'OUT' : p.origin === 'zombie' ? 'ZOMBIE'
+      : p.status === 'ESCAPED' ? 'ESCAPED' : p.status === 'INFECTED' ? 'TURNED' : 'SURVIVED';
+    let bonus = 0, won = false;
+    if (winner === 'survivors' && (outcome === 'ESCAPED' || outcome === 'SURVIVED')) { bonus = 100; won = true; }
+    else if (winner === 'zombies') {
+      if (outcome === 'ZOMBIE') { bonus = 100; won = true; }
+      else if (outcome === 'TURNED') { // infected players share the win, scaled by how long they lasted
+        const frac = Math.min(1, p.infectedEl / (0.75 * dur));
+        bonus = Math.round(100 * (0.25 + 0.75 * frac)); won = true;
+      } else if (outcome === 'ESCAPED' || outcome === 'SURVIVED') bonus = 50; // personal success, team fell short
+    }
     return {
-      userId: p.id, name: p.name, avatar: p.avatar, startRole: p.origin, endRole: p.team, status: p.status,
+      userId: p.id, name: p.name, avatar: p.avatar, startRole: p.origin, endRole: p.team, status: p.status, outcome, won, bonus,
       score: p.score + bonus, missions: p.missions.length, infections: p.infections, extracted: p.extracted,
     };
   });
@@ -595,11 +668,13 @@ function finish(room, winner, reason, now = Date.now()) {
 
 // ---------------------------------------------------------------- snapshot / restore
 export function snapshot(room) {
-  const { tokens, dirty, lastSnap, ...rest } = room;
+  const { tokens, dirty, lastSnap, voice, ...rest } = room;
   return JSON.parse(JSON.stringify(rest));
 }
 export function restoreRoom(state) {
-  const room = { ...state, tokens: {}, dirty: true, lastSnap: 0 };
+  const room = { ...state, tokens: {}, voice: {}, dirty: true, lastSnap: 0 };
+  room.settings = { ...DEFAULT_SETTINGS, ...room.settings };
+  room.supplyStock ||= {};
   for (const p of Object.values(room.players)) { p.connected = false; p.disconnectedAt = Date.now(); }
   if (room.status === 'running') { room.pausedAt = Date.now(); room.status = 'paused'; ev(room, 'Server restarted - match paused. Host: resume when ready.', { type: 'pause' }); }
   rooms.set(room.code, room);
@@ -623,6 +698,17 @@ export function janitor(now = Date.now()) {
   }
 }
 
+// ---------------------------------------------------------------- voice (push-to-talk radio)
+// Survivors talk to survivors, zombies to zombies. Infected survivors join the zombie channel. Someone who is
+// incubating (infected but holding an antidote) is on no channel. Voice is relayed live and never stored.
+export function channelOf(room, p) {
+  if (!p || (room.status !== 'running' && room.status !== 'paused')) return null;
+  if (!['ALIVE', 'INFECTED', 'ESCAPED'].includes(p.status)) return null;
+  if (p.incubateUntil > elapsed(room)) return null;
+  return p.team || null;
+}
+export const channelMembers = (room, ch) => Object.values(room.players).filter((p) => channelOf(room, p) === ch);
+
 // ---------------------------------------------------------------- views
 const slimLoc = (p) => (p.loc ? { lat: p.loc.lat, lng: p.loc.lng, acc: Math.round(p.loc.acc), at: p.loc.at } : null);
 
@@ -638,7 +724,7 @@ export function viewFor(room, userId, { admin = false } = {}, now = Date.now()) 
 
   const players = Object.values(room.players).map((p) => ({
     id: p.id, name: p.name, avatar: p.avatar, ready: p.ready, connected: p.connected, host: p.id === room.hostId,
-    state: room.status === 'lobby' ? 'LOBBY' : p.status === 'INFECTED' || p.status === 'OUT' || p.status === 'LEFT' ? p.status : 'ALIVE',
+    state: room.status === 'lobby' ? 'LOBBY' : ['INFECTED', 'OUT', 'LEFT', 'ESCAPED'].includes(p.status) ? p.status : 'ALIVE',
     team: allowTeam(p) ? p.team : null,
     ...(admin ? { loc: slimLoc(p), score: p.score, origin: p.origin, status: p.status, flags: p.flags } : {}),
   }));
@@ -655,6 +741,7 @@ export function viewFor(room, userId, { admin = false } = {}, now = Date.now()) 
       survivors: survivorsAlive(room).length, zombies: zombies(room).length,
       infected: Object.values(room.players).filter((p) => p.status === 'INFECTED').length,
       out: Object.values(room.players).filter((p) => p.status === 'OUT' || p.status === 'LEFT').length,
+      escaped: Object.values(room.players).filter((p) => p.status === 'ESCAPED').length,
       total: Object.keys(room.players).length,
     },
   };
@@ -685,9 +772,20 @@ export function viewFor(room, userId, { admin = false } = {}, now = Date.now()) 
       radar: me.radar ? { list: me.radar.list, leftMs: me.radar.until - el } : null,
       supplyCd: Object.fromEntries(Object.entries(me.supplyCd).map(([k, t]) => [k, Math.max(0, t - el)])),
       jumpy: now - me.jumpAt < 8000, infections: me.infections,
+      incubateLeftMs: me.incubateUntil > el ? me.incubateUntil - el : 0, shieldReadyLeftMs: Math.max(0, me.shieldReadyAt - el), channel: channelOf(room, me),
     };
     v.team = team;
-    v.hints = { at: room.hints.at, nextInMs: Math.max(0, room.hints.nextAt - el), list: started ? hints : [] };
+    v.hints = { at: room.hints.at, nextInMs: Math.max(0, room.hints.nextAt - el), list: started ? hints.filter((h) => h.until == null || el < h.until).map(({ until, ...h }) => ({ ...h, leftMs: until == null ? null : until - el })) : [] };
+    // who is working on which objective right now (anonymous). Survivors always see it; zombies only when objectives are "noisy".
+    const act = {};
+    for (const p of Object.values(room.players)) if (p.activity && p.status === 'ALIVE') {
+      const a = (act[p.activity.cpId] ||= { cpId: p.activity.cpId, kind: p.activity.kind, count: 0, pct: 0, leftMs: Infinity, mine: false });
+      a.leftMs = Math.min(a.leftMs, Math.max(0, p.activity.holdMs - (el - p.activity.startedEl)));
+      a.count++; a.pct = Math.max(a.pct, Math.min(1, (el - p.activity.startedEl) / p.activity.holdMs)); if (p.id === me.id) a.mine = true;
+    }
+    v.activities = s.noisyObjectives || myTeam === 'survivor' ? Object.values(act) : Object.values(act).filter((a) => a.mine);
+    v.hide = { leftMs: Math.max(0, hideMs(room) - el), totalMs: hideMs(room) };
+    if (s.supplyMode === 'free') v.supplyStock = Object.fromEntries(Object.entries(room.supplyStock || {}).map(([k, st]) => [k, st.n]));
   }
   if (admin) {
     v.hintsAll = room.hints;

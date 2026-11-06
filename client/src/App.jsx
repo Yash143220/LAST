@@ -32,16 +32,18 @@ function Private({ children }) {
 }
 
 export default function App() {
-  const { loading, error, toasts, conn, user, banner, dismissBanner, config } = useSession();
+  const { loading, error, toasts, conn, user } = useSession();
   const online = useOnline();
+  const { pathname } = useLocation();
+  const inMatch = /^\/m\//.test(pathname);
+  const bannerPos = inMatch ? 'bottom-[calc(env(safe-area-inset-bottom)+5.25rem)]' : 'bottom-3';
   if (loading) return <Spinner label="Starting up" />;
   if (error) return <div className="min-h-dvh grid place-items-center p-6 text-center"><div><h1 className="font-display text-3xl font-bold mb-2">Server unreachable</h1><p className="text-sage mb-4">{error}</p><Button onClick={() => location.reload()}>Try again</Button></div></div>;
   return (
     <Boundary>
-      <Toasts toasts={toasts} />
-      {!online && <div className="fixed z-[70] bottom-3 inset-x-3 flex justify-center"><Banner tone="bad" className="max-w-md w-full"><span className="inline-flex items-center gap-2"><WifiOff className="size-4" />You are offline. The match continues on the server, reconnecting…</span></Banner></div>}
-      {online && user && conn === 'offline' && <div className="fixed z-[70] bottom-3 inset-x-3 flex justify-center"><Banner tone="warn" className="max-w-md w-full">Connection lost. Reconnecting…</Banner></div>}
-      {(banner || config?.announcement) && user && <div className="fixed z-[65] top-0 inset-x-0 safe-top p-2"><Banner tone="info" onClose={banner ? dismissBanner : undefined}>{banner || config.announcement}</Banner></div>}
+      <Toasts toasts={toasts} inMatch={inMatch} />
+      {!online && <div className={`fixed z-[70] ${bannerPos} inset-x-3 flex justify-center`}><Banner tone="bad" className="max-w-md w-full"><span className="inline-flex items-center gap-2"><WifiOff className="size-4" />You are offline. The match continues on the server, reconnecting…</span></Banner></div>}
+      {online && user && conn === 'offline' && <div className={`fixed z-[70] ${bannerPos} inset-x-3 flex justify-center`}><Banner tone="warn" className="max-w-md w-full">Connection lost. Reconnecting…</Banner></div>}
       <Suspense fallback={<Spinner />}>
         <Routes>
           <Route path="/login" element={<Login />} />

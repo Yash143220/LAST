@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { Map as MapIcon, Target, Package, ScanLine, Users, Menu as MenuIcon, Skull, ShieldCheck, Crosshair, Pause, Play, LogOut, Siren, ChevronUp, ChevronDown, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Check, Lock, Flag, CameraOff } from 'lucide-react';
+import { Map as MapIcon, Target, Package, ScanLine, Users, Menu as MenuIcon, Skull, ShieldCheck, Crosshair, Pause, Play, LogOut, Siren, ChevronUp, ChevronDown, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Check, Lock, Flag, CameraOff, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import { emit } from '../lib/socket.js';
 import { useSession, useTicker } from '../lib/session.jsx';
-import { useGps, useWakeLock, askLocation } from '../lib/gps.js';
+import { useGps, useWakeLock, useResumeNotice } from '../lib/gps.js';
+import { useRadio } from '../lib/voice.js';
 import { haversine, inShape, fmtDist, fmtClock, areaCenter } from '../lib/geo.js';
 import { C, ITEMS, MISSION_NAMES, MISSION_POINTS } from '../lib/theme.js';
 import MapView from '../components/MapView.jsx';
@@ -12,7 +13,7 @@ import Scanner from '../components/QrScanner.jsx';
 import { CheckpointPin, MePin, MatePin, MissionIcon } from '../components/Pins.jsx';
 import { Avatar, Badge, Banner, Button, Card, Confirm, Field, Input, Progress, Sheet, cx } from '../components/ui.jsx';
 
-const TABS = [['map', 'Map', MapIcon], ['missions', 'Objectives', Target], ['supplies', 'Supplies', Package], ['infect', 'Infect', ScanLine], ['team', 'Team', Users], ['menu', 'Menu', MenuIcon]];
+const tabsFor = (team) => [['map', 'Map', MapIcon], ['missions', team === 'zombie' ? 'Missions' : 'Objectives', Target], ...(team === 'zombie' ? [] : [['supplies', 'Supplies', Package]]), ['infect', 'Infect', ScanLine], ['team', 'Team', Users], ['menu', 'Menu', MenuIcon]];
 
 export default function Game({ state, offset, incoming, clearIncoming }) {
   const nav = useNavigate();
@@ -25,9 +26,12 @@ export default function Game({ state, offset, incoming, clearIncoming }) {
   const [simPos, setSimPos] = useState(null);
   const [revealed, setRevealed] = useState(false);
   const [report, setReport] = useState(false);
+  const [qrMin, setQrMin] = useState(false);
+  const radio = useRadio({ channel: me.channel, active: true });
   const [leave, setLeave] = useState(false);
   const gps = useGps(!sim);
-  useWakeLock(true);
+  const wake = useWakeLock(true);
+  useResumeNotice((sec) => toast(`You were away ${sec}s. GPS and live updates pause while the screen is off or the app is in the background.`, 'warn'));
 
   const age = Date.now() - (state.serverNow - offset);
   const running = state.status === 'running';
@@ -46,9 +50,12 @@ export default function Game({ state, offset, incoming, clearIncoming }) {
   }, [state.code]);
   useEffect(() => { if (sim && !simPos) setSimPos(gps.fix || pos || startPos); }, [sim]); // eslint-disable-line
 
+  const hintKey = state.hints.list.map((h) => h.id).join(',');
+  useEffect(() => { if (hintKey) navigator.vibrate?.(120); }, [hintKey]);
+
   // incoming infection QR -> jump to the QR tab
   const qrLeft = incoming ? incoming.expiresAt - (Date.now() + incoming.offset) : 0;
-  useEffect(() => { if (incoming) { setTab('infect'); navigator.vibrate?.([200, 100, 200]); } }, [incoming]);
+  useEffect(() => { if (incoming) { setQrMin(false); setTab('map'); navigator.vibrate?.([200, 100, 200]); } }, [incoming]);
   useEffect(() => { if (incoming && qrLeft <= 0) clearIncoming(); });
   useEffect(() => { if (me.status === 'INFECTED') clearIncoming(); }, [me.status]); // eslint-disable-line
 
@@ -58,12 +65,15 @@ export default function Game({ state, offset, incoming, clearIncoming }) {
   const insideZone = pos && zoneNow ? inShape(zoneNow, pos) : true;
   const graceLeft = me.graceLeftMs != null ? Math.max(0, me.graceLeftMs - (running ? age : 0)) : null;
   const gpsBad = pos && pos.acc > s.maxAccuracy;
+  const incLeft = Math.max(0, (me.incubateLeftMs || 0) - (running ? age : 0));
+  const hideLeft = Math.max(0, (state.hide?.leftMs || 0) - (running ? age : 0));
   const nextIn = state.zone?.nextInMs != null ? Math.max(0, state.zone.nextInMs - (running ? age : 0)) : null;
 
   const done = new Set(state.missions.list.filter((m) => m.done).map((m) => m.type));
+  const actMap = new Map((state.activities || []).map((a) => [a.cpId, a]));
   const hintColor = isZomb ? C.lime : C.danger;
   const items = [
-    ...state.checkpoints.map((c) => ({ id: c.id, lat: c.lat, lng: c.lng, z: 2, node: <CheckpointPin cp={c} done={c.kind === 'mission' && done.has(c.missionType)} />, onClick: () => setTab('missions') })),
+    ...state.checkpoints.map((c) => { const a = actMap.get(c.id); return { id: c.id, lat: c.lat, lng: c.lng, z: a ? 4 : 2, node: <CheckpointPin cp={c} done={c.kind === 'mission' && done.has(c.missionType)} busy={!!a} pct={a ? Math.min(1, a.pct + (running ? age / 1000 / ((a.kind === 'mission' ? s.missionHoldSec : s.extractionHoldSec) || 60) : 0)) : 0} tone={a?.mine ? C.lime : isZomb ? C.danger : C.info} />, onClick: () => setTab('missions') }; }),
     ...state.team.map((t) => ({ id: `t${t.id}`, lat: t.lat, lng: t.lng, z: 3, node: <MatePin name={t.name} team={me.team} /> })),
     ...(pos ? [{ id: 'me', lat: pos.lat, lng: pos.lng, z: 6, node: <MePin team={me.team} acc={pos.acc} /> }] : []),
   ];
@@ -72,18 +82,20 @@ export default function Game({ state, offset, incoming, clearIncoming }) {
   const move = (dx, dy) => setSimPos((p) => p && ({ lat: p.lat + (dy * 4) / 110540, lng: p.lng + (dx * 4) / (111320 * Math.cos((p.lat * Math.PI) / 180)) }));
   const doLeave = async () => { const r = await emit('game:leave'); if (r.ok) { setActiveGame(null); nav('/'); } else toast(r.error, 'warn'); };
 
+  const tabs = tabsFor(me.team);
+  useEffect(() => { if (!tabs.some(([id]) => id === tab)) setTab('map'); }, [me.team]); // eslint-disable-line react-hooks/exhaustive-deps
   const showReveal = state.status === 'countdown' || (!revealed && elapsed < 6000 && running);
   const cdLeft = Math.max(0, state.timer.countdownEndsAt - (Date.now() + offset));
 
   return (
     <div className="fixed inset-0 flex flex-col bg-bg">
-      <MapView ref={mapRef} className="flex-1" center={pos || startPos} zoom={17} area={state.zone.area} zone={state.zone.current} nextZone={state.zone.next} hints={hints} items={items} onClick={sim ? (p) => setSimPos(p) : undefined} />
+      <MapView ref={mapRef} className="flex-1" controlsClass="right-3 bottom-4" onLocate={() => pos && mapRef.current?.flyTo(pos, 17.5)} center={pos || startPos} zoom={17} area={state.zone.area} zone={state.zone.current} nextZone={state.zone.next} hints={hints} items={items} onClick={sim ? (p) => setSimPos(p) : undefined} />
 
       {/* HUD */}
-      <div className="absolute top-0 inset-x-0 safe-top p-2 pointer-events-none">
+      <div className="absolute top-0 inset-x-0 z-20 safe-top p-2 pointer-events-none">
         <div className="flex items-stretch gap-2 pointer-events-auto">
-          <div className={cx('rounded-xl px-3 py-1.5 border flex flex-col justify-center', isZomb ? 'bg-danger/20 border-danger/60 text-danger' : 'bg-brand/25 border-brand text-lime')}>
-            <span className="text-[11px] leading-none opacity-80">{me.status === 'INFECTED' ? 'Infected' : me.status === 'OUT' ? 'Out' : 'You are'}</span>
+          <div className={cx('rounded-xl px-3 py-1.5 border flex flex-col justify-center', isZomb ? 'bg-[#3a1815]/95 border-danger/70 text-danger' : 'bg-[#123b1b]/95 border-brand text-lime')}>
+            <span className="text-[11px] leading-none text-text/80">{me.status === 'INFECTED' ? 'Infected' : me.status === 'OUT' ? 'Out' : 'You are'}</span>
             <span className="font-display text-xl font-bold leading-tight flex items-center gap-1">{isZomb ? <Skull className="size-4" /> : <ShieldCheck className="size-4" />}{isZomb ? 'Zombie' : 'Survivor'}</span>
           </div>
           <div className="flex-1 rounded-xl bg-bg/90 border border-line px-3 py-1.5 text-center">
@@ -91,7 +103,7 @@ export default function Game({ state, offset, incoming, clearIncoming }) {
             <div className="text-[11px] text-sage leading-tight">{state.timer.paused ? 'PAUSED' : state.timer.extractionOpen ? 'Extraction open' : nextIn != null ? `Zone shrinks in ${fmtClock(nextIn)}` : 'Final zone'}</div>
           </div>
           <div className="rounded-xl bg-bg/90 border border-line px-3 py-1.5 text-right text-xs leading-tight flex flex-col justify-center">
-            <span className="text-lime">{state.counts.survivors} survivors</span><span className="text-danger">{state.counts.zombies} zombies</span>
+            <span className="text-lime">{state.counts.survivors} survivors</span><span className="text-danger">{state.counts.zombies} zombies</span>{state.counts.escaped > 0 && <span className="text-info">{state.counts.escaped} escaped</span>}
           </div>
         </div>
         <div className="mt-2 space-y-1.5 max-w-md pointer-events-auto">
@@ -101,37 +113,43 @@ export default function Game({ state, offset, incoming, clearIncoming }) {
           {!sim && gps.perm === 'denied' && <Banner tone="bad">Location is blocked. Enable location for this site in your browser settings to play.</Banner>}
           {!sim && gps.perm === 'unknown' && <Banner tone="info">Waiting for GPS… keep this screen open outdoors.</Banner>}
           {gpsBad && <Banner tone="warn">GPS accuracy ±{Math.round(pos.acc)} m. Needs ±{s.maxAccuracy} m to complete objectives. Move into the open.</Banner>}
+          {incLeft > 0 && alive && <div className="rounded-xl bg-danger text-bg px-3 py-2 flex items-center gap-2"><Siren className="size-5 shrink-0" /><span className="flex-1 font-semibold">You are infected! Antidote window {fmtClock(incLeft)}. Drink it or you turn into a zombie.</span>{me.inventory.medkit > 0 && <Button size="sm" variant="ghost" onClick={async () => { const r = await emit('item:use', { item: 'medkit' }); if (!r.ok) toast(r.error, 'warn'); }}>Drink</Button>}</div>}
+          {hideLeft > 0 && <Banner tone={isZomb ? 'warn' : 'info'}>{isZomb ? `Hide phase: you are released in ${fmtClock(hideLeft)}. Stay at your starting point. No infections and no hints yet.` : `Zombies are held back for ${fmtClock(hideLeft)}. Move and hide!`}</Banner>}
+          {me.status === 'ESCAPED' && <Banner tone="good">You escaped! You are safe. Watch the rest of the match.</Banner>}
+          {wake === 'off' && <Banner tone="warn">Screen may turn off and pause GPS. Keep this app open, and set your phone's screen timeout to the maximum.</Banner>}
+          {wake === 'unsupported' && <Banner tone="warn">This browser cannot keep the screen awake. Set your phone's screen timeout to the maximum, otherwise GPS pauses when it sleeps.</Banner>}
           {me.status === 'INFECTED' && <Banner tone="bad">You were infected. You are now a zombie: hunt the remaining survivors.</Banner>}
           {me.status === 'OUT' && <Banner tone="bad">You were removed from the match (signal lost).</Banner>}
           {sim && <Banner tone="warn">SIMULATED GPS · tap the map or use the pad to move</Banner>}
         </div>
       </div>
 
-      <button onClick={() => pos && mapRef.current?.flyTo(pos, 17.5)} className="absolute right-3 top-[40%] size-11 rounded-xl grid place-items-center bg-surface/95 border border-line shadow" aria-label="Centre on me"><Crosshair className="size-5" /></button>
 
       {sim && (
-        <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] grid grid-cols-3 gap-1 w-36 z-10">
+        <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+11.5rem)] grid grid-cols-3 gap-1 w-36 z-10">
           {[[null], [ArrowUp, 0, 1], [null], [ArrowLeft, -1, 0], [null], [ArrowRight, 1, 0], [null], [ArrowDown, 0, -1], [null]].map((b, i) => b[0]
             ? <HoldBtn key={i} Icon={b[0]} onStep={() => move(b[1], b[2])} /> : <span key={i} />)}
         </div>
       )}
 
+      <RadioButton radio={radio} channel={me.channel} incubating={me.incubateLeftMs > 0} panelOpen={tab !== 'map'} />
+
       {/* panel */}
       {tab !== 'map' && (
-        <section className="sheet-in absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.25rem)] max-h-[58dvh] bg-surface/98 backdrop-blur border-t border-line rounded-t-3xl flex flex-col" aria-label={tab}>
+        <section className="sheet-in absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.25rem)] z-20 max-h-[46dvh] bg-surface/98 backdrop-blur border-t border-line rounded-t-3xl flex flex-col" aria-label={tab}>
           <button onClick={() => setTab('map')} className="mx-auto mt-1.5 mb-0.5 text-sage" aria-label="Collapse panel"><ChevronDown className="size-6" /></button>
           <div className="scroll-y px-4 pb-4 space-y-3">
             {tab === 'missions' && <Objectives {...{ state, me, isSurv, inRange, dist, toast, age: running ? age : 0 }} />}
             {tab === 'supplies' && <Supplies {...{ state, me, isSurv, inRange, dist, toast }} />}
-            {tab === 'infect' && <Infect {...{ state, me, isZomb, isSurv, incoming, qrLeft, clearIncoming, toast, offset }} />}
+            {tab === 'infect' && <Infect {...{ state, me, isZomb, isSurv, incoming, qrLeft, clearIncoming, toast, offset, hideLeft }} />}
             {tab === 'team' && <Team {...{ state, me, pos }} />}
             {tab === 'menu' && <MenuPanel {...{ state, sim, setSim, setReport, setLeave, toast }} />}
           </div>
         </section>
       )}
 
-      <nav className="relative z-20 bg-bg border-t border-line safe-bottom grid grid-cols-6" aria-label="Game sections">
-        {TABS.map(([id, label, Icon]) => (
+      <nav className="relative z-20 bg-bg border-t border-line safe-bottom grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }} aria-label="Game sections">
+        {tabs.map(([id, label, Icon]) => (
           <button key={id} onClick={() => setTab(tab === id ? 'map' : id)} aria-current={tab === id} className={cx('relative py-2 flex flex-col items-center gap-0.5 text-[11px]', tab === id ? 'text-lime' : 'text-sage')}>
             <Icon className="size-5" />{label}
             {id === 'infect' && incoming && <span className="absolute top-1.5 right-[28%] size-2.5 rounded-full bg-danger" />}
@@ -139,6 +157,7 @@ export default function Game({ state, offset, incoming, clearIncoming }) {
         ))}
       </nav>
 
+      {incoming && qrLeft > 0 && isSurv && me.status === 'ALIVE' && !qrMin && <QrOverlay incoming={incoming} qrLeft={qrLeft} onClose={() => setQrMin(true)} />}
       {showReveal && <RoleReveal me={me} s={s} cdLeft={cdLeft} counting={state.status === 'countdown'} onClose={() => setRevealed(true)} />}
       {state.status === 'paused' && (
         <div className="absolute inset-0 z-30 bg-bg/85 grid place-items-center p-6 text-center"><div><Pause className="size-12 text-lime mx-auto mb-2" /><h2 className="font-display text-4xl font-bold">Match paused</h2><p className="text-sage my-2">Stop where you are and stay safe. {state.events.at(-1)?.msg}</p>
@@ -147,6 +166,43 @@ export default function Game({ state, offset, incoming, clearIncoming }) {
       )}
       <ReportSheet open={report} onClose={() => setReport(false)} toast={toast} />
       <Confirm open={leave} danger title="Leave the match?" body="You cannot rejoin once you leave. Your team continues without you." confirmLabel="Leave match" onClose={() => setLeave(false)} onConfirm={doLeave} />
+    </div>
+  );
+}
+
+function QrOverlay({ incoming, qrLeft, onClose }) {
+  return (
+    <div className="absolute inset-0 z-50 bg-bg flex flex-col items-center justify-center p-5 safe-top text-center" role="dialog" aria-label="Zombie contact">
+      <div className="text-danger font-display text-4xl font-bold leading-none">Zombie contact</div>
+      <p className="text-sage mt-1 mb-4 text-sm">A zombie is within range and asked to scan you.</p>
+      <div className="bg-white p-3 rounded-2xl"><QRCodeSVG value={incoming.qr} size={240} bgColor="#FFFFFF" fgColor="#0E231E" level="M" /></div>
+      <div className="text-sm text-sage mt-4">Or tell them this code</div>
+      <div className="font-display text-6xl font-bold tracking-[0.25em] pl-[0.25em] text-lime">{incoming.code}</div>
+      <div className="mt-2">Expires in <b>{Math.ceil(qrLeft / 1000)}s</b> · one use only</div>
+      <p className="text-xs text-sage mt-3 max-w-xs">Do not want to be tagged? Use a Shield or move away. The code expires by itself.</p>
+      <Button variant="ghost" className="mt-4" onClick={onClose}>Minimise</Button>
+    </div>
+  );
+}
+
+function RadioButton({ radio, channel, incubating, panelOpen }) {
+  const { talking, speaker, error, muted, setMuted, start, stop, supported } = radio;
+  const off = !channel;
+  const label = channel === 'zombie' ? 'Zombie radio' : channel === 'survivor' ? 'Survivor radio' : incubating ? 'Radio off - infected' : 'Radio off';
+  const down = (e) => { e.preventDefault(); e.currentTarget.setPointerCapture?.(e.pointerId); start(); };
+  return (
+    <div className={cx('absolute left-3 z-30 flex items-end gap-2', panelOpen ? 'bottom-[calc(env(safe-area-inset-bottom)+46dvh+5.25rem)]' : 'bottom-[calc(env(safe-area-inset-bottom)+5.5rem)]')}>
+      <button disabled={off || !supported} onPointerDown={down} onPointerUp={stop} onPointerCancel={stop} onContextMenu={(e) => e.preventDefault()}
+        onKeyDown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); start(); } }} onKeyUp={(e) => { if (e.key === ' ' || e.key === 'Enter') stop(); }}
+        aria-label={`Push to talk. ${label}`} style={{ touchAction: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
+        className={cx('size-[72px] rounded-full grid place-items-center border-2 shadow-xl transition-colors', off || !supported ? 'bg-surface/90 border-line text-sage' : talking ? 'bg-danger border-white text-bg scale-105' : speaker ? 'bg-info/30 border-info text-info' : 'bg-bg/95 border-lime text-lime active:bg-lime active:text-bg')}>
+        {off || !supported ? <MicOff className="size-7" /> : <Mic className="size-7" />}
+      </button>
+      <div className="mb-1 max-w-[11rem] rounded-xl bg-bg/90 border border-line px-2.5 py-1.5 text-xs leading-tight">
+        <div className={channel === 'zombie' ? 'text-danger font-semibold' : channel === 'survivor' ? 'text-lime font-semibold' : 'text-sage'}>{label}</div>
+        <div className="text-sage">{error ? <span className="text-[#f2c14e]">{error}</span> : talking ? 'Transmitting… release to stop' : speaker ? `${speaker} is talking` : off ? (supported ? 'No channel' : 'Not supported here') : 'Hold to talk'}</div>
+        {!off && <button onClick={() => setMuted(!muted)} aria-pressed={muted} className="mt-1 inline-flex items-center gap-1 text-sage hover:text-text">{muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}{muted ? 'Muted' : 'Sound on'}</button>}
+      </div>
     </div>
   );
 }
@@ -181,11 +237,13 @@ function Objectives({ state, me, isSurv, inRange, dist, toast, age }) {
   const a = me.activity;
   const ex = nearest(state.checkpoints.filter((c) => c.kind === 'extraction'));
   const need = Math.max(0, state.missions.required - state.missions.done);
+  const live = (cps) => { const xs = (state.activities || []).filter((x) => cps.some((c) => c.id === x.cpId)); return xs.length ? { count: xs.reduce((n, x) => n + x.count, 0), left: Math.max(0, Math.min(...xs.map((x) => x.leftMs)) - age) } : null; };
+  const exLive = live(state.checkpoints.filter((c) => c.kind === 'extraction'));
   return (
     <>
-      <div className="flex items-baseline justify-between"><h2 className="font-display text-2xl font-bold">Objectives</h2><span className="text-sm text-sage">{state.missions.done}/{state.missions.required} needed</span></div>
+      <div className="flex items-baseline justify-between"><h2 className="font-display text-2xl font-bold">{isSurv ? 'Objectives' : 'Mission watch'}</h2><span className="text-sm text-sage">{state.missions.done}/{state.missions.required} needed</span></div>
       {a && <Card className="border-lime/60 space-y-2"><div className="font-medium">{a.kind === 'mission' ? 'Working on objective' : 'Extracting'}…</div><Progress value={(a.progressMs + age) / a.holdMs} /><div className="text-xs text-sage">Stay inside the checkpoint radius. Leaving cancels progress.</div><Button size="sm" variant="ghost" onClick={() => emit('activity:cancel')}>Cancel</Button></Card>}
-      {!isSurv && <Banner tone="info">Survivors complete these to unlock extraction. As a zombie, watch these locations: survivors must visit them.</Banner>}
+      {!isSurv && <Banner tone="info">Survivors must visit these points. A pin glows on the map while a survivor is working there, and the time left is shown here. Intercept them.</Banner>}
       <div className="space-y-2">
         {state.missions.list.map((m) => {
           const n = nearest(state.checkpoints.filter((c) => c.kind === 'mission' && c.missionType === m.type));
@@ -193,7 +251,7 @@ function Objectives({ state, me, isSurv, inRange, dist, toast, age }) {
           return (
             <div key={m.type} className="rounded-xl border border-line/70 bg-bg/50 p-3 flex items-center gap-3">
               <span className={cx('size-10 rounded-full grid place-items-center', m.done ? 'bg-brand/30 text-lime' : 'bg-raised text-lime')}>{m.done ? <Check className="size-5" /> : <MissionIcon type={m.type} className="size-5" />}</span>
-              <div className="flex-1 min-w-0"><div className="font-medium">{m.name} <span className="text-lime text-sm">+{m.points}</span></div>
+              <div className="flex-1 min-w-0"><div className="font-medium">{m.name} <span className="text-lime text-sm">+{m.points}</span>{!m.done && (() => { const lv = live(state.checkpoints.filter((c) => c.missionType === m.type)); return lv && <Badge tone="info" className="ml-2">in progress · {fmtClock(lv.left)} left</Badge>; })()}</div>
                 <div className="text-xs text-sage">{m.done ? `Done by ${m.by}` : n ? `${n.c.name} · ${n.d != null ? fmtDist(n.d) : 'locating…'}${n.c.description ? ` · ${n.c.description}` : ''}` : m.text}</div></div>
               {can && <Button size="sm" onClick={() => act(n.c)}>Start</Button>}
             </div>
@@ -202,7 +260,7 @@ function Objectives({ state, me, isSurv, inRange, dist, toast, age }) {
       </div>
       <div className="rounded-xl border border-info/40 bg-info/10 p-3 flex items-center gap-3">
         <span className="size-10 rounded-full grid place-items-center bg-raised text-info">{need > 0 || !state.timer.extractionOpen ? <Lock className="size-5" /> : <Flag className="size-5" />}</span>
-        <div className="flex-1 min-w-0"><div className="font-medium">Extraction</div>
+        <div className="flex-1 min-w-0"><div className="font-medium">Extraction{exLive && <Badge tone="info" className="ml-2">in progress · {fmtClock(exLive.left)} left</Badge>}</div>
           <div className="text-xs text-sage">{need > 0 ? `Complete ${need} more mission${need > 1 ? 's' : ''} first.` : !state.timer.extractionOpen ? `Opens in ${fmtClock(state.timer.extractionOpensInMs)}.` : ex ? `Go to ${ex.c.name} · ${ex.d != null ? fmtDist(ex.d) : '…'}. Hold for ${s.extractionHoldSec}s to win.` : 'No extraction point.'}</div></div>
         {isSurv && ex && need === 0 && state.timer.extractionOpen && !a && inRange(ex.c) && me.status === 'ALIVE' && <Button size="sm" onClick={() => act(ex.c)}>Extract</Button>}
       </div>
@@ -216,18 +274,21 @@ function Supplies({ state, me, isSurv, inRange, dist, toast }) {
   const buy = async (item) => { const r = await emit('supply:buy', { cpId: here.id, item }); if (!r.ok) toast(r.error, 'warn'); else toast(`${ITEMS[item].name} added.`, 'good'); };
   const use = async (item) => { const r = await emit('item:use', { item }); if (!r.ok) toast(r.error, 'warn'); };
   const cd = here ? me.supplyCd[here.id] : 0;
+  const free = state.settings.supplyMode === 'free';
+  const stock = here ? state.supplyStock?.[here.id] : null;
   return (
     <>
-      <div className="flex items-baseline justify-between"><h2 className="font-display text-2xl font-bold">Supplies</h2><span className="text-sm">Credits <b className="text-lime text-lg font-display">{me.credits}</b></span></div>
+      <div className="flex items-baseline justify-between"><h2 className="font-display text-2xl font-bold">Supplies</h2>{free ? <Badge tone="good">Free pickups</Badge> : <span className="text-sm">Credits <b className="text-lime text-lg font-display">{me.credits}</b></span>}</div>
+      {free && here && <div className="text-sm text-sage">Stock at this point: <b className="text-text">{stock ?? '-'}</b> / {state.settings.supplyStock}. It refills over time.</div>}
       {!isSurv && <Banner tone="info">Only survivors can collect supplies.</Banner>}
       <div className="text-sm text-sage">{here ? <span className="text-lime">You are at {here.name}. {cd > 0 ? `Cooling down ${Math.ceil(cd / 1000)}s.` : 'You can collect now.'}</span> : sup.length ? `Nearest supply: ${fmtDist(Math.min(...sup.map((c) => dist(c) ?? 1e9)))} away. Walk inside its radius to collect.` : 'No supply points in this match.'}</div>
       <div className="grid gap-2">
         {Object.entries(ITEMS).map(([k, it]) => (
           <div key={k} className="rounded-xl border border-line/70 bg-bg/50 p-3 flex items-center gap-3">
-            <div className="flex-1 min-w-0"><div className="font-medium">{it.name} <span className="text-sage text-sm">· {it.cost} cr</span></div><div className="text-xs text-sage">{it.text}</div><div className="text-xs text-sage mt-0.5">Owned {me.inventory[k]} · bought {me.bought[k]}/{it.limit}</div></div>
+            <div className="flex-1 min-w-0"><div className="font-medium">{it.name} <span className="text-sage text-sm">· {free ? 'free' : `${it.cost} cr`}</span>{k === 'shield' && me.shieldReadyLeftMs > 0 && <Badge className="ml-2">recharging {Math.ceil(me.shieldReadyLeftMs / 1000)}s</Badge>}</div><div className="text-xs text-sage">{it.text}</div><div className="text-xs text-sage mt-0.5">Owned {me.inventory[k]} · bought {me.bought[k]}/{it.limit}</div></div>
             <div className="flex flex-col gap-1.5">
-              <Button size="sm" variant="ghost" disabled={!isSurv || !here || cd > 0 || me.credits < it.cost || me.bought[k] >= it.limit || me.status !== 'ALIVE'} onClick={() => buy(k)}>Collect</Button>
-              {k !== 'medkit' && <Button size="sm" disabled={!me.inventory[k] || !isSurv || me.status !== 'ALIVE'} onClick={() => use(k)}>Use</Button>}
+              <Button size="sm" variant="ghost" disabled={!isSurv || !here || cd > 0 || (k === 'shield' && me.shieldReadyLeftMs > 0) || (!free && me.credits < it.cost) || (free && stock <= 0) || me.bought[k] >= it.limit || me.status !== 'ALIVE'} onClick={() => buy(k)}>{free ? 'Take' : 'Collect'}</Button>
+              <Button size="sm" disabled={!me.inventory[k] || !isSurv || me.status !== 'ALIVE' || (k === 'shield' && me.shieldReadyLeftMs > 0) || (k === 'medkit' && !(me.incubateLeftMs > 0))} onClick={() => use(k)}>{k === 'medkit' ? 'Drink' : 'Use'}</Button>
             </div>
           </div>
         ))}
@@ -237,7 +298,7 @@ function Supplies({ state, me, isSurv, inRange, dist, toast }) {
   );
 }
 
-function Infect({ state, me, isZomb, isSurv, incoming, qrLeft, toast }) {
+function Infect({ state, me, isZomb, isSurv, incoming, qrLeft, toast, hideLeft }) {
   const s = state.settings;
   const [phase, setPhase] = useState('idle');   // idle | scanning
   const [msg, setMsg] = useState(null);
@@ -257,7 +318,7 @@ function Infect({ state, me, isZomb, isSurv, incoming, qrLeft, toast }) {
     if (busy.current) return; busy.current = true;
     const r = await emit('infect:confirm', { token });
     busy.current = false;
-    if (r.ok) { setPhase('idle'); setMsg(r.resisted ? { tone: 'warn', text: 'The survivor resisted with an antidote. The scan is used up.' } : { tone: 'good', text: `${r.name} is infected! +100` }); }
+    if (r.ok) { setPhase('idle'); setMsg({ tone: 'good', text: `${r.name} is infected!` }); }
     else { setMsg({ tone: 'bad', text: r.error }); if (r.code !== 'INVALID') setPhase('idle'); }
   };
   useEffect(() => { if (phase === 'scanning' && Date.now() > exp) { setPhase('idle'); setMsg({ tone: 'warn', text: 'The attempt timed out. Get close and try again.' }); } });
@@ -288,7 +349,8 @@ function Infect({ state, me, isZomb, isSurv, incoming, qrLeft, toast }) {
         {phase === 'idle' ? (
           <Card className="space-y-3">
             <p className="text-sm text-sage">Get within about {s.infectionRange} m of a survivor, then tap below. The server checks both GPS positions. If you are close enough, the survivor's screen shows a QR code for {s.qrTtlSec} seconds. Scan it. No touching, no chasing.</p>
-            <Button size="lg" variant="danger" className="w-full" icon={ScanLine} onClick={request}>Initiate infection</Button>
+            {hideLeft > 0 && <Banner tone="warn">Hide phase: you can infect in {fmtClock(hideLeft)}.</Banner>}
+            <Button size="lg" variant="danger" className="w-full" icon={ScanLine} disabled={hideLeft > 0} onClick={request}>Initiate infection</Button>
           </Card>
         ) : (
           <Card className="space-y-3">

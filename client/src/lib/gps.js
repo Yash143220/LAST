@@ -27,16 +27,33 @@ export function askLocation() {
   });
 }
 
-// Keeps the screen awake during a match (best effort; not supported everywhere).
+// Keeps the screen awake during a match and reports whether it actually worked ('on' | 'off' | 'unsupported').
 export function useWakeLock(active) {
-  const lock = useRef(null);
+  const [state, setState] = useState('unknown');
   useEffect(() => {
-    if (!active || !('wakeLock' in navigator)) return;
-    const acquire = async () => { try { lock.current = await navigator.wakeLock.request('screen'); } catch { /* ignore */ } };
+    if (!active) return;
+    if (!('wakeLock' in navigator)) { setState('unsupported'); return; }
+    let lock = null, dead = false;
+    const acquire = async () => {
+      try {
+        lock = await navigator.wakeLock.request('screen'); if (!dead) setState('on');
+        lock.addEventListener('release', () => { if (!dead) setState('off'); });
+      } catch { if (!dead) setState('off'); }
+    };
     const vis = () => { if (document.visibilityState === 'visible') acquire(); };
     acquire(); document.addEventListener('visibilitychange', vis);
-    return () => { document.removeEventListener('visibilitychange', vis); lock.current?.release?.().catch(() => {}); };
+    return () => { dead = true; document.removeEventListener('visibilitychange', vis); lock?.release?.().catch(() => {}); };
   }, [active]);
+  return state;
+}
+
+// Calls back when the page comes back after being hidden (screen off / other app) so we can warn that GPS paused.
+export function useResumeNotice(onResume) {
+  const t = useRef(0); const cb = useRef(onResume); cb.current = onResume;
+  useEffect(() => {
+    const f = () => { if (document.visibilityState === 'hidden') t.current = Date.now(); else if (t.current && Date.now() - t.current > 8000) { cb.current(Math.round((Date.now() - t.current) / 1000)); t.current = 0; } else t.current = 0; };
+    document.addEventListener('visibilitychange', f); return () => document.removeEventListener('visibilitychange', f);
+  }, []);
 }
 
 export function useOnline() {

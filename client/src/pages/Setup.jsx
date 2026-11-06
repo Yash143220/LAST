@@ -257,17 +257,27 @@ function RulesTab({ draft: d, set }) {
         <Slider label="Countdown after start" value={d.countdownSec} min={5} max={30} unit=" s" onChange={(v) => set({ countdownSec: v })} /></Card>
       <Card><h2 className="font-display text-2xl font-bold">Missions &amp; extraction</h2>
         <Slider label="Missions needed to unlock extraction" value={d.requiredMissions} min={1} max={5} onChange={(v) => set({ requiredMissions: v })} />
-        <Slider label="Time to complete a mission" value={d.missionHoldSec} min={5} max={60} unit=" s" onChange={(v) => set({ missionHoldSec: v })} hint="Survivors must stay inside the checkpoint radius." />
-        <Slider label="Extraction countdown" value={d.extractionHoldSec} min={10} max={60} unit=" s" onChange={(v) => set({ extractionHoldSec: v })} />
+        <Slider label="Time to complete a mission" value={d.missionHoldSec} min={d.allowSimGps ? 10 : 60} max={300} step={d.allowSimGps ? 5 : 10} unit=" s" onChange={(v) => set({ missionHoldSec: v })} hint="How long a survivor must stay inside the checkpoint radius. Leaving resets it. 60 s - 5 min (shorter only in practice mode)." />
+        <Slider label="Extraction time" value={d.extractionHoldSec} min={d.allowSimGps ? 10 : 60} max={180} step={5} unit=" s" onChange={(v) => set({ extractionHoldSec: v })} hint="How long a survivor must stay inside the extraction radius to escape. Leaving resets it. 60-180 s." />
+        <Slider label="Survivors needed for a team win" value={d.survivorWinPercent} min={10} max={100} step={5} unit="%" onChange={(v) => set({ survivorWinPercent: v })} hint="Escaped + still-alive survivors, as a share of all survivors. Each survivor escapes on their own." />
         <Slider label="Extraction opens in the last" value={d.extractionWindowMin} min={1} max={Math.max(1, Math.min(15, Math.floor(d.durationMin / 2)))} unit=" min" onChange={(v) => set({ extractionWindowMin: v })} /></Card>
+      <Card><h2 className="font-display text-2xl font-bold">Hide phase</h2>
+        <Slider label="Zombie waiting time" value={d.hideSec} min={0} max={Math.min(300, Math.floor(d.durationMin * 30))} step={10} unit=" s" onChange={(v) => set({ hideSec: v })} hint="Survivors move and hide first. Zombies can not infect and get no hints until it ends. 0 = off." />
+        <Slider label="First hint is visible for" value={d.firstHintSec} min={5} max={60} step={5} unit=" s" onChange={(v) => set({ firstHintSec: v })} hint="The first location hint zombies get when released. The normal hint timing starts after it." /></Card>
       <Card><h2 className="font-display text-2xl font-bold">Infection</h2>
         <Slider label="Infection distance" value={d.infectionRange} min={5} max={25} unit=" m" onChange={(v) => set({ infectionRange: v })} hint="GPS is not exact. The QR scan on the survivor's screen is the real confirmation." />
         <Slider label="QR code lifetime" value={d.qrTtlSec} min={10} max={30} unit=" s" onChange={(v) => set({ qrTtlSec: v })} /></Card>
       <Card><h2 className="font-display text-2xl font-bold">Intel</h2>
         <Slider label="Location hint every" value={d.revealIntervalSec} min={30} max={300} step={10} unit=" s" onChange={(v) => set({ revealIntervalSec: v })} />
         <Slider label="Hint area radius" value={d.hintRadius} min={30} max={150} step={5} unit=" m" onChange={(v) => set({ hintRadius: v })} hint="Bigger = vaguer. The real position is somewhere inside the circle." />
+        <Slider label="Later hints stay visible for" value={d.hintVisibleSec} min={0} max={120} step={10} unit={d.hintVisibleSec === 0 ? ' (until next)' : ' s'} onChange={(v) => set({ hintVisibleSec: v === 10 ? 10 : v })} hint="0 = until the next scan replaces them." />
+        <Toggle label="Noisy objectives" hint="Zombies can see when a survivor is working on an objective (glowing pin, no names)." checked={d.noisyObjectives} onChange={(v) => set({ noisyObjectives: v })} />
         <Toggle label="Survivors also see zombie hints" checked={d.revealToSurvivors} onChange={(v) => set({ revealToSurvivors: v })} />
         <Toggle label="Survivors can identify teammates" hint="Also reveals who the starting zombies are by elimination." checked={d.survivorsKnowTeam} onChange={(v) => set({ survivorsKnowTeam: v })} /></Card>
+      <Card><h2 className="font-display text-2xl font-bold">Supplies</h2>
+        <Field label="How supplies are obtained"><Segmented value={d.supplyMode} onChange={(v) => set({ supplyMode: v })} options={[{ value: 'credits', label: 'Buy with credits' }, { value: 'free', label: 'Free pickups' }]} /></Field>
+        {d.supplyMode === 'free' && <><Slider label="Stock per supply point" value={d.supplyStock} min={1} max={10} onChange={(v) => set({ supplyStock: v })} /><Slider label="Restock one item every" value={d.supplyRefillSec} min={60} max={600} step={30} unit=" s" onChange={(v) => set({ supplyRefillSec: v })} /></>}
+        <p className="text-xs text-sage">Credits mode: items cost mission credits. Free mode: no cost, but each point has limited stock that refills.</p></Card>
       <Card><h2 className="font-display text-2xl font-bold">Safe zone</h2>
         <Toggle label="Zone shrinks during the match" checked={d.shrink} onChange={(v) => set({ shrink: v })} />
         <Slider label="Grace period outside the zone" value={d.graceSec} min={15} max={180} step={5} unit=" s" onChange={(v) => set({ graceSec: v })} />
@@ -275,7 +285,7 @@ function RulesTab({ draft: d, set }) {
       <Card><h2 className="font-display text-2xl font-bold">GPS &amp; fairness</h2>
         <Slider label="Required GPS accuracy" value={d.maxAccuracy} min={10} max={60} step={5} unit=" m" onChange={(v) => set({ maxAccuracy: v })} hint="Actions and penalties are ignored when accuracy is worse than this." />
         <Slider label="Drop players with no signal for" value={d.forfeitSignalLossSec} min={0} max={900} step={60} unit=" s" onChange={(v) => set({ forfeitSignalLossSec: v === 60 ? 60 : v })} hint="0 = never. Stops survivors hiding with their phone off." />
-        <Toggle label="Allow simulated GPS (practice mode)" hint="Players can move with on-screen controls. For testing only - never for real matches." checked={d.allowSimGps} onChange={(v) => set({ allowSimGps: v })} /></Card>
+        <Toggle label="Allow simulated GPS (practice mode)" hint="Players can move with on-screen controls. For testing only - never for real matches." checked={d.allowSimGps} onChange={(v) => set(v ? { allowSimGps: true } : { allowSimGps: false, missionHoldSec: Math.max(60, d.missionHoldSec), extractionHoldSec: Math.max(60, d.extractionHoldSec) })} /></Card>
     </>
   );
 }

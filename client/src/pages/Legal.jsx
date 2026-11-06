@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 
-const OP = import.meta.env.VITE_OPERATOR_NAME || 'the Operation: Outbreak operator';
+const OP = import.meta.env.VITE_OPERATOR_NAME || 'the Humans: The Last Alive operator';
 const MAIL = import.meta.env.VITE_CONTACT_EMAIL || 'support@example.com';
 const UPDATED = '1 November 2026';
 
@@ -20,13 +20,14 @@ function Doc({ title, children }) {
 
 export const Terms = () => (
   <Doc title="Terms & Conditions">
-    <p>These terms govern your use of Operation: Outbreak ("the Game"), operated by {OP}. By creating an account you agree to them.</p>
+    <p>These terms govern your use of Humans: The Last Alive ("the Game"), operated by {OP}. By creating an account you agree to them.</p>
     <h2>Playing safely is a condition of play</h2>
     <p>The Game is played in the real world. You are solely responsible for where you walk. You must follow the <Link to="/safety">Safety Rules</Link>. We may suspend accounts that put others at risk.</p>
     <h2>Your account</h2>
     <ul><li>You sign in with Google. Keep your Google account secure; you are responsible for activity on your account.</li><li>Choose a callsign that is not offensive or impersonating anyone.</li><li>You must be 16 or older, or play with a parent or guardian's permission and supervision.</li></ul>
     <h2>Fair play</h2>
-    <ul><li>No spoofing GPS, scripts, bots or tampering with the app or servers (simulated GPS is allowed only in matches where the host enables practice mode).</li><li>No harassment, chasing, physical contact or trespassing. Infections are confirmed by QR code, never by touching.</li><li>Hosts must review and approve every checkpoint for safety before starting a match.</li></ul>
+    <ul><li>No spoofing GPS, scripts, bots or tampering with the app or servers (simulated GPS is allowed only in matches where the host enables practice mode).</li><li>No abusive, threatening or hateful language on the radio. Do not record or share other players' voices.</li>
+    <li>No harassment, chasing, physical contact or trespassing. Infections are confirmed by QR code, never by touching.</li><li>Hosts must review and approve every checkpoint for safety before starting a match.</li></ul>
     <h2>Hosts</h2>
     <p>Hosts choose the play area and checkpoints and are responsible for ensuring they are open, public, pedestrian-safe and permitted. Do not place checkpoints on private property, roads, railways, or inside buildings.</p>
     <h2>Availability and changes</h2>
@@ -42,19 +43,20 @@ export const Terms = () => (
 
 export const Privacy = () => (
   <Doc title="Privacy Policy">
-    <p>This policy explains what {OP} collects when you use Operation: Outbreak and why.</p>
+    <p>This policy explains what {OP} collects when you use Humans: The Last Alive and why.</p>
     <h2>What we collect</h2>
     <ul>
       <li><b>Account:</b> your Google email, name and profile photo (from Google sign-in), your public callsign and optional profile picture, and a record of the agreements you accepted and when.</li>
       <li><b>Gameplay:</b> matches you join, your role, missions, items, infections, scores and aggregate statistics.</li>
       <li><b>Location:</b> your phone's GPS position while you are in a running match. Opponents only ever see an approximate area; teammates may see your position. Live positions are held in server memory for the match and are <b>not stored in your history</b>. Matches are saved without coordinates.</li>
+      <li><b>Voice:</b> if you use the push-to-talk radio, your microphone audio is relayed live to your teammates only (survivors to survivors, zombies to zombies). It is <b>not recorded and not stored</b>. The microphone is used only while you hold the talk button, and only after you allow it in your browser.</li>
       <li><b>Safety reports:</b> if you send a report, we store the type, your note, your name and the approximate location.</li>
       <li><b>Technical:</b> IP address and request logs for security and abuse prevention, and a session cookie that keeps you signed in.</li>
     </ul>
     <h2>Why we use it</h2>
     <p>To run matches, keep the Game fair and safe, show your profile and stats, and investigate abuse and safety reports. We do not sell personal data and do not show ads.</p>
     <h2>Who receives it</h2>
-    <ul><li>Other players in your match (callsign, picture, and location as described above).</li><li>Google (sign-in).</li><li>OpenFreeMap serves the map tiles, so your IP address and viewed map area are visible to them. The place search in the host setup uses OpenStreetMap Nominatim.</li><li>Our hosting and database providers, who process data for us.</li></ul>
+    <ul><li>Other players in your match (callsign, picture, location as described above, and your live voice if you use the radio, to teammates only).</li><li>Google (sign-in).</li><li>OpenFreeMap serves the map tiles, so your IP address and viewed map area are visible to them. The place search in the host setup uses OpenStreetMap Nominatim.</li><li>Our hosting and database providers, who process data for us.</li></ul>
     <h2>How long we keep it</h2>
     <ul><li>Account data: until you delete your account.</li><li>Match results (without coordinates): up to 12 months, then deleted. When you delete your account, your entries are anonymised.</li><li>Safety reports: up to 180 days.</li><li>Admin audit logs: up to 12 months.</li></ul>
     <h2>Your choices and rights</h2>
@@ -68,7 +70,7 @@ export const Privacy = () => (
 
 export const Safety = () => (
   <Doc title="Safety Rules">
-    <p>Operation: Outbreak is a walking game. Nothing in it is worth an injury.</p>
+    <p>Humans: The Last Alive is a walking game. Nothing in it is worth an injury.</p>
     <h2>Always</h2>
     <ul><li><b>Walk. Never run</b> or chase. There is no physical contact in this game.</li><li>Look up. Do not stare at your phone while moving, crossing streets, or on stairs.</li><li>Stay in <b>open, public, pedestrian-friendly outdoor areas</b>.</li><li>Play in daylight or well-lit areas, in groups where possible, and tell someone where you are playing.</li><li>Keep to the park rules, local laws and the rights of other people around you.</li></ul>
     <h2>Never</h2>

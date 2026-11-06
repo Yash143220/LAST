@@ -7,14 +7,17 @@ export const MISSIONS = {
 };
 
 export const ITEMS = {
-  shield: { name: 'Shield',      cost: 80,  limit: 2, text: 'Blocks infection attempts for 60 seconds.' },
+  shield: { name: 'Shield',      cost: 80,  limit: 2, text: 'Absorbs one infection attempt (up to 60 s), then breaks. Wait 3 min before using another.' },
   radar:  { name: 'Radar',       cost: 60,  limit: 3, text: 'Reveals approximate zombie positions within 150 m for 30 seconds.' },
   energy: { name: 'Energy Pack', cost: 50,  limit: 2, text: 'Missions and extraction hold take half the time for 2 minutes.' },
-  medkit: { name: 'Antidote',    cost: 120, limit: 1, text: 'Passive. Cancels one infection and grants 20 seconds of protection.' },
+  medkit: { name: 'Antidote',    cost: 200, limit: 1, text: 'If you get infected you have 2 minutes to drink it. It cures you and protects you for 30 s.' },
 };
 export const SHIELD_MS = 60_000;
 export const ENERGY_MS = 120_000;
-export const ANTIDOTE_MS = 20_000;
+export const ANTIDOTE_MS = 30_000;           // protection after drinking the antidote
+export const ANTIDOTE_WINDOW_MS = 120_000;   // time to drink it after being infected
+export const SHIELD_COOLDOWN_MS = 180_000;   // from activation until another shield can be used/bought
+export const ZOMBIE_LOCK_MS = 30_000;        // a zombie whose attempt was shield-blocked cannot retry that survivor
 export const RADAR_MS = 30_000;
 export const RADAR_RANGE = 150;
 export const SUPPLY_COOLDOWN_MS = 30_000;

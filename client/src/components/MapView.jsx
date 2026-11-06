@@ -1,9 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
 const { setWorkerUrl } = maplibregl;
-import { Box, Compass } from 'lucide-react';
+import { Box, Compass, Locate, Sun, Moon } from 'lucide-react';
+import { darkenStyle } from '../lib/darkStyle.js';
 import { C, MAP_STYLE } from '../lib/theme.js';
 import { polyFeature, shapeRing, shapeBounds, circleCoords } from '../lib/geo.js';
 
@@ -20,7 +20,7 @@ const DANGER_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'te
  * Markers are React nodes portalled into MapLibre markers.
  */
 export default forwardRef(function MapView({
-  area, zone, nextZone, danger = true, hints = [], draft, items = [], center, zoom = 16, fit, onClick, className, controls = true, interactive = true, padding,
+  area, zone, nextZone, danger = true, hints = [], draft, items = [], center, zoom = 16, fit, onClick, className, controls = true, interactive = true, padding, onLocate, controlsClass = 'right-3 top-3',
 }, ref) {
   const box = useRef(null);
   const mapRef = useRef(null);
@@ -29,6 +29,9 @@ export default forwardRef(function MapView({
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [tilt, setTilt] = useState(false);
+  const [styleVer, setStyleVer] = useState(0);
+  const [dark, setDark] = useState(() => { try { return localStorage.getItem('oo_map_dark') !== '0'; } catch { return true; } });
+  const darkRef = useRef(dark);
   const [, bump] = useState(0);
   clickRef.current = onClick;
 
@@ -57,42 +60,54 @@ export default forwardRef(function MapView({
     },
   }));
 
-  // create map once
+  // create map once. The real style is fetched, darkened (unless the player chose light), then applied.
+  const styleRef = useRef(null);
+  const applyStyle = (map, dark) => {
+    const raw = styleRef.current;
+    if (!raw) return;
+    map.setStyle(dark ? darkenStyle(raw) : raw, { diff: false });
+  };
   useEffect(() => {
     const c = center || { lat: 20.2961, lng: 85.8245 };
-    let map;
+    const BLANK = { version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#0E231E' } }] };
+    let map; let dead = false;
     try {
-      map = new maplibregl.Map({ container: box.current, style: MAP_STYLE, center: [c.lng, c.lat], zoom, maxPitch: 70, attributionControl: { compact: true }, interactive, pitchWithRotate: true });
+      map = new maplibregl.Map({ container: box.current, style: BLANK, center: [c.lng, c.lat], zoom, maxPitch: 70, attributionControl: { compact: true }, interactive, pitchWithRotate: true });
     } catch { setFailed(true); return; }
     mapRef.current = map;
-    let loaded = false;
-    // Only a failure to load the *style* is fatal; a missing tile mid-game must not hide the map.
-    map.on('error', () => { if (!loaded) setFailed(true); });
-    map.on('load', () => {
-      loaded = true;
-      const before = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
-      // Ensure 3D buildings exist (OpenFreeMap "liberty" ships them; add if a style change removes them).
-      if (!map.getStyle().layers.some((l) => l.type === 'fill-extrusion')) {
+    let styled = false;
+    map.on('error', () => { if (!styled) setFailed(true); });
+    // (re)build overlays every time a style finishes loading (initial load and day/night switches)
+    map.on('style.load', () => {
+      const layers = map.getStyle().layers;
+      const before = layers.find((l) => l.type === 'symbol')?.id;
+      if (!layers.some((l) => l.type === 'fill-extrusion')) {
         const src = Object.entries(map.getStyle().sources).find(([, s]) => s.type === 'vector')?.[0];
         if (src) map.addLayer({ id: 'bld-3d', type: 'fill-extrusion', source: src, 'source-layer': 'building', minzoom: 15, paint: { 'fill-extrusion-color': '#2a4a3f', 'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 6], 'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0], 'fill-extrusion-opacity': 0.8 } }, before);
       }
-      for (const id of ['danger', 'area', 'zone', 'next', 'hints', 'draft', 'draftpts']) map.addSource(id, { type: 'geojson', data: EMPTY });
-      map.addLayer({ id: 'danger-fill', type: 'fill', source: 'danger', paint: { 'fill-color': C.danger, 'fill-opacity': 0.26 } }, before);
+      for (const id of ['danger', 'area', 'zone', 'next', 'hints', 'draft']) if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: EMPTY });
+      map.addLayer({ id: 'danger-fill', type: 'fill', source: 'danger', paint: { 'fill-color': C.danger, 'fill-opacity': 0.2 } }, before);
       map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zone', paint: { 'fill-color': C.brand, 'fill-opacity': 0.07 } }, before);
       map.addLayer({ id: 'area-line', type: 'line', source: 'area', paint: { 'line-color': C.sage, 'line-width': 2, 'line-dasharray': [3, 3] } }, before);
       map.addLayer({ id: 'next-line', type: 'line', source: 'next', paint: { 'line-color': C.info, 'line-width': 2, 'line-dasharray': [1, 2] } }, before);
       map.addLayer({ id: 'zone-line', type: 'line', source: 'zone', paint: { 'line-color': C.lime, 'line-width': 3 } }, before);
-      map.addLayer({ id: 'hints-fill', type: 'fill', source: 'hints', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.2 } }, before);
+      map.addLayer({ id: 'hints-fill', type: 'fill', source: 'hints', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.22 } }, before);
       map.addLayer({ id: 'hints-line', type: 'line', source: 'hints', paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-dasharray': [2, 1.5] } }, before);
       map.addLayer({ id: 'draft-fill', type: 'fill', source: 'draft', paint: { 'fill-color': C.lime, 'fill-opacity': 0.12 } });
       map.addLayer({ id: 'draft-line', type: 'line', source: 'draft', paint: { 'line-color': C.lime, 'line-width': 3 } });
-      setReady(true);
+      if (styleRef.current) styled = true;
+      setReady(true); setStyleVer((v) => v + 1);
     });
+    fetch(MAP_STYLE).then((r) => { if (!r.ok) throw new Error('style'); return r.json(); })
+      .then((json) => { if (dead) return; styleRef.current = json; applyStyle(map, darkRef.current); })
+      .catch(() => { if (!dead) setFailed(true); });
     map.on('click', (e) => clickRef.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng }));
     const ro = new ResizeObserver(() => map.resize()); ro.observe(box.current);
-    return () => { ro.disconnect(); markers.current.forEach((m) => m.marker.remove()); markers.current.clear(); map.remove(); mapRef.current = null; setReady(false); };
+    return () => { dead = true; ro.disconnect(); markers.current.forEach((m) => m.marker.remove()); markers.current.clear(); map.remove(); mapRef.current = null; setReady(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const toggleDark = () => { const next = !dark; setDark(next); darkRef.current = next; try { localStorage.setItem('oo_map_dark', next ? '1' : '0'); } catch { /* ignore */ } if (mapRef.current) applyStyle(mapRef.current, next); };
 
   const setData = (id, data) => mapRef.current?.getSource(id)?.setData(data);
 
@@ -103,12 +118,12 @@ export default forwardRef(function MapView({
     setData('zone', live ? fc([polyFeature(shapeRing(live))]) : EMPTY);
     setData('danger', danger && live ? fc([{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [WORLD, shapeRing(live)] } }]) : EMPTY);
     setData('next', nextZone ? fc([polyFeature(shapeRing(nextZone))]) : EMPTY);
-  }, [ready, area, zone, nextZone, danger]);
+  }, [ready, styleVer, area, zone, nextZone, danger]);
 
   useEffect(() => {
     if (!ready) return;
     setData('hints', fc(hints.map((h) => polyFeature(circleCoords(h, h.r, 40), { color: h.color || C.info }))));
-  }, [ready, hints]);
+  }, [ready, styleVer, hints]);
 
   useEffect(() => {
     if (!ready) return;
@@ -118,7 +133,7 @@ export default forwardRef(function MapView({
     if (ring.length >= 3) feats.push(polyFeature([...ring, ring[0]]));
     else if (ring.length === 2) feats.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: ring } });
     setData('draft', fc(feats));
-  }, [ready, draft]);
+  }, [ready, styleVer, draft]);
 
   // center / fit control
   const lastCenter = useRef(null);
@@ -158,12 +173,14 @@ export default forwardRef(function MapView({
   const toggleTilt = () => { const map = mapRef.current; const next = !tilt; setTilt(next); map.easeTo({ pitch: next ? 62 : 0, zoom: next ? Math.max(map.getZoom(), 17) : map.getZoom(), duration: 700 }); };
 
   return (
-    <div className={`relative ${className || ''}`}>
-      <div ref={box} className="absolute inset-0 bg-bg" style={{ position: 'absolute', inset: 0 }} />
+    <div className={`relative isolate z-0 ${className || ''}`}>
+      <div ref={box} className="absolute inset-0 bg-bg" />
       {[...markers.current.entries()].map(([id, m]) => byId.get(id) && createPortal(byId.get(id).node, m.el, id))}
       {controls && ready && (
-        <div className="absolute right-3 top-3 flex flex-col gap-2 z-10">
+        <div className={`absolute ${controlsClass} flex flex-col gap-2 z-10`}>
+          {onLocate && <button onClick={onLocate} aria-label="Centre on me" className="size-10 rounded-xl grid place-items-center border border-line bg-surface/95 text-text shadow"><Locate className="size-5" /></button>}
           <button onClick={toggleTilt} aria-pressed={tilt} aria-label="Toggle 3D buildings" className={`size-10 rounded-xl grid place-items-center border border-line shadow ${tilt ? 'bg-lime text-bg' : 'bg-surface/95 text-text'}`}><Box className="size-5" /></button>
+          <button onClick={toggleDark} aria-label={dark ? 'Switch to light map' : 'Switch to dark map'} className="size-10 rounded-xl grid place-items-center border border-line bg-surface/95 text-text shadow">{dark ? <Sun className="size-5" /> : <Moon className="size-5" />}</button>
           <button onClick={() => mapRef.current.easeTo({ bearing: 0, pitch: tilt ? 62 : 0, duration: 400 })} aria-label="Reset north" className="size-10 rounded-xl grid place-items-center border border-line bg-surface/95 text-text shadow"><Compass className="size-5" /></button>
         </div>
       )}

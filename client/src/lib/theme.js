@@ -5,8 +5,8 @@ export const MISSION_ICON = { comms: 'Antenna', medical: 'Cross', power: 'Zap', 
 export const MISSION_NAMES = { comms: 'Communication Tower', medical: 'Medical Supplies', power: 'Power Restoration', signal: 'Emergency Signal', rescue: 'Rescue Preparation' };
 export const MISSION_POINTS = { comms: 100, medical: 100, power: 150, signal: 150, rescue: 200 };
 export const ITEMS = {
-  shield: { name: 'Shield', cost: 80, limit: 2, text: 'Blocks infection attempts for 60 seconds.' },
+  shield: { name: 'Shield', cost: 80, limit: 2, text: 'Absorbs one infection attempt (up to 60 s), then breaks. Wait 3 min before using another.' },
   radar: { name: 'Radar', cost: 60, limit: 3, text: 'Shows approximate zombie positions within 150 m for 30 seconds.' },
   energy: { name: 'Energy Pack', cost: 50, limit: 2, text: 'Objectives take half the time for 2 minutes.' },
-  medkit: { name: 'Antidote', cost: 120, limit: 1, text: 'Passive. Cancels one infection and gives 20 seconds of protection.' },
+  medkit: { name: 'Antidote', cost: 200, limit: 1, text: 'If you get infected you have 2 minutes to drink it. It cures you and protects you for 30 s.' },
 };

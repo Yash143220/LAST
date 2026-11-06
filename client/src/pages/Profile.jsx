@@ -5,14 +5,16 @@ import { api } from '../lib/api.js';
 import { useSession } from '../lib/session.jsx';
 import { Avatar, Banner, Button, Card, Field, Input, Sheet } from '../components/ui.jsx';
 
-function resizeToDataUrl(file, px = 192) {
+// Crops to a square and shrinks to 128 px WebP (JPEG fallback): a few KB per picture.
+function resizeToBlob(file, px = 128) {
   return new Promise((resolve, reject) => {
     if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return reject(new Error('Use a JPEG, PNG or WebP image.'));
     const img = new Image(); const url = URL.createObjectURL(file);
     img.onload = () => {
       const s = Math.min(img.width, img.height), c = document.createElement('canvas'); c.width = c.height = px;
       c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, px, px);
-      URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', 0.82));
+      URL.revokeObjectURL(url);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not process the image.'))), 'image/webp', 0.8);
     };
     img.onerror = () => reject(new Error('That image could not be read.'));
     img.src = url;
@@ -34,12 +36,20 @@ export default function Profile() {
   };
   const onFile = async (e) => {
     const f = e.target.files?.[0]; e.target.value = ''; if (!f) return;
-    try { await patch({ avatar: await resizeToDataUrl(f) }, 'avatar'); } catch (er) { toast(er.message, 'warn'); }
+    setBusy('avatar');
+    try {
+      const blob = await resizeToBlob(f);
+      const r = await fetch('/api/me/avatar', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': blob.type }, body: blob });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'Upload failed.');
+      setUser(j.user); toast('Picture saved.', 'good');
+    } catch (er) { toast(er.message, 'warn'); } finally { setBusy(''); }
   };
+  const removeAvatar = async () => { setBusy('avatar'); try { const r = await api('/me/avatar', { method: 'DELETE' }); setUser(r.user); } catch (er) { toast(er.message, 'warn'); } finally { setBusy(''); } };
   const exportData = async () => {
     const r = await fetch('/api/me/export', { credentials: 'same-origin' });
     if (!r.ok) return toast('Export failed.', 'warn');
-    const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = 'operation-outbreak-my-data.json'; a.click(); URL.revokeObjectURL(a.href);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = 'humans-the-last-alive-my-data.json'; a.click(); URL.revokeObjectURL(a.href);
   };
   const deleteAccount = async () => {
     setBusy('del');
@@ -60,7 +70,7 @@ export default function Profile() {
             <div className="flex flex-col gap-2">
               <input ref={file} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onFile} />
               <Button size="sm" variant="ghost" icon={Camera} busy={busy === 'avatar'} onClick={() => file.current.click()}>Upload picture</Button>
-              {user.avatar && <Button size="sm" variant="quiet" onClick={() => patch({ avatar: '' }, 'avatar')}>{user.photoUrl ? 'Use Google photo' : 'Remove picture'}</Button>}
+              {user.avatar && <Button size="sm" variant="quiet" onClick={removeAvatar}>{user.photoUrl ? 'Use Google photo' : 'Remove picture'}</Button>}
             </div>
           </div>
           <Field label="Callsign" hint="2-20 characters. Other players see this name."><Input value={name} maxLength={20} onChange={(e) => setName(e.target.value)} /></Field>

@@ -10,7 +10,7 @@ function Stat({ label, value }) {
 }
 
 export default function Home() {
-  const { user, activeGame, setActiveGame, config, toast } = useSession();
+  const { user, activeGame, setActiveGame, config, toast, banner, dismissBanner } = useSession();
   const nav = useNavigate();
   const { code: urlCode } = useParams();
   const [code, setCode] = useState(urlCode || '');
@@ -44,6 +44,7 @@ export default function Home() {
         </div>
       </header>
 
+      {(banner || config?.announcement) && <Banner tone="info" className="mb-3" onClose={banner ? dismissBanner : undefined}><b>Announcement:</b> {banner || config.announcement}</Banner>}
       {config?.maintenance && <Banner tone="warn" className="mb-3">New matches are paused for maintenance. You can still join an existing match.</Banner>}
       {activeGame && (
         <Card className="mb-4 border-lime/50 bg-brand/15">
@@ -79,7 +80,7 @@ export default function Home() {
         {games === null ? <Spinner /> : games.length === 0 ? <Card><Empty title="No matches yet">Join a room or host one to start your record.</Empty></Card> : (
           <div className="space-y-2">
             {games.map((g) => {
-              const won = g.winner !== 'none' && ((g.winner === 'survivors') === (g.me?.endRole === 'survivor'));
+              const won = g.winner !== 'none' && (g.me?.won ?? ((g.winner === 'survivors') === (g.me?.endRole === 'survivor')));
               return (
                 <button key={g.id} onClick={() => setDetail(g)} className="w-full text-left rounded-xl bg-surface border border-line/70 p-3 flex items-center gap-3 hover:bg-raised">
                   <div className={`size-10 rounded-lg grid place-items-center ${g.winner === 'none' ? 'bg-raised text-sage' : won ? 'bg-brand/25 text-lime' : 'bg-danger/15 text-danger'}`}>{g.winner === 'none' ? <ShieldCheck className="size-5" /> : won ? <Trophy className="size-5" /> : <Skull className="size-5" />}</div>
@@ -109,7 +110,7 @@ export function ResultDetail({ id }) {
       <div className="flex gap-2 flex-wrap"><Badge tone={r.winner === 'zombies' ? 'bad' : 'good'}>{w}</Badge><Badge>{r.reason?.replace('_', ' ')}</Badge><Badge>{Math.round(r.durationSec / 60)} min</Badge><Badge>{r.missionsDone?.length || 0} missions</Badge></div>
       <div className="divide-y divide-line/60">
         {[...r.players].sort((a, b) => b.score - a.score).map((p, i) => (
-          <div key={i} className="py-2 flex items-center gap-3"><Avatar src={p.avatar} name={p.name} size={32} /><div className="flex-1 min-w-0"><div className="truncate">{p.name}</div><div className="text-xs text-sage">{p.startRole} → {p.endRole} · {p.status.toLowerCase()}</div></div><div className="font-display text-xl text-lime">{p.score}</div></div>
+          <div key={i} className="py-2 flex items-center gap-3"><Avatar src={p.avatar} name={p.name} size={32} /><div className="flex-1 min-w-0"><div className="truncate">{p.name}</div><div className="text-xs text-sage">{p.startRole} → {p.endRole} · {(p.outcome || p.status).toLowerCase()}</div></div><div className="font-display text-xl text-lime">{p.score}</div></div>
         ))}
       </div>
     </div>
@@ -118,7 +119,7 @@ export function ResultDetail({ id }) {
 
 function HostSheet({ open, onClose, onDone }) {
   const { toast } = useSession();
-  const [s, setS] = useState({ name: 'Operation Outbreak', maxPlayers: 10, zombieCount: 2, durationMin: 30 });
+  const [s, setS] = useState({ name: 'Humans: The Last Alive', maxPlayers: 10, zombieCount: 2, durationMin: 30 });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setS((x) => ({ ...x, [k]: v }));
   const go = async () => {

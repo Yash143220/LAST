@@ -2,11 +2,12 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { COOKIE, cookieOpts, signSession, verifyGoogleCredential, requireAuth, publicUser, sanitizeName } from '../auth.js';
-import { User, GameResult, Preset } from '../models.js';
+import express from 'express';
+import { COOKIE, cookieOpts, signSession, verifyGoogleCredential, requireAuth, publicUser, sanitizeName, avatarUrl } from '../auth.js';
+import { User, GameResult, Preset, Avatar } from '../models.js';
 import { rooms, userRoom, createRoom, applyConfig, viewFor } from '../engine.js';
 import { areaSchema, checkpointsSchema, cleanText } from '../schemas.js';
-import { deleteAccount, getAppSettings } from '../services.js';
+import { deleteAccount, getAppSettings, saveAvatar, removeAvatar } from '../services.js';
 import { disconnectUser } from '../sockets.js';
 
 export const api = Router();
@@ -91,27 +92,48 @@ api.post('/auth/logout-all', wrap(async (req, res) => {
 // ------------------------------------------------------------ profile
 api.get('/me', (req, res) => res.json({ user: publicUser(req.user), activeGame: userRoom.get(String(req.user._id)) || null }));
 
-const AVATAR_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 api.patch('/me', wrap(async (req, res) => {
-  const { displayName, avatar } = req.body || {};
+  const { displayName } = req.body || {};
   if (displayName !== undefined) {
     const n = sanitizeName(displayName);
     if (n.length < 2) return res.status(400).json({ error: 'Callsign must be 2-20 characters.' });
     req.user.displayName = n;
   }
-  if (avatar !== undefined) {
-    if (avatar === '') req.user.avatar = '';
-    else if (typeof avatar === 'string' && avatar.length <= config.limits.avatarBytes && AVATAR_RE.test(avatar)) req.user.avatar = avatar;
-    else return res.status(400).json({ error: 'Profile picture must be a JPEG/PNG/WebP under ~64 KB.' });
-  }
   await req.user.save();
-  const code = userRoom.get(String(req.user._id)); const room = code && rooms.get(code);
-  if (room?.players[String(req.user._id)]) {
-    const p = room.players[String(req.user._id)];
-    if (room.status === 'lobby') { p.name = req.user.displayName; }
-    p.avatar = req.user.avatar || req.user.photoUrl || ''; room.dirty = true;
-  }
+  syncRoomIdentity(req.user);
   res.json({ user: publicUser(req.user) });
+}));
+
+function syncRoomIdentity(user) {
+  const id = String(user._id);
+  const code = userRoom.get(id); const room = code && rooms.get(code);
+  const p = room?.players[id];
+  if (!p) return;
+  if (room.status === 'lobby') p.name = user.displayName;
+  p.avatar = avatarUrl(user); room.dirty = true;
+}
+
+// Profile picture: client sends a ~128 px WebP/JPEG/PNG (a few KB). Stored once, served by URL.
+api.put('/me/avatar', express.raw({ type: ['image/webp', 'image/jpeg', 'image/png'], limit: '48kb' }), wrap(async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length < 100) return res.status(400).json({ error: 'Send an image (JPEG, PNG or WebP, under 48 KB).' });
+  try { await saveAvatar(String(req.user._id), req.body); } catch (e) { return res.status(e.status || 500).json({ error: e.message }); }
+  const u = await User.findById(req.user._id);
+  syncRoomIdentity(u);
+  res.json({ user: publicUser(u) });
+}));
+api.delete('/me/avatar', wrap(async (req, res) => {
+  await removeAvatar(String(req.user._id));
+  const u = await User.findById(req.user._id);
+  syncRoomIdentity(u);
+  res.json({ user: publicUser(u) });
+}));
+api.get('/avatar/:id', wrap(async (req, res) => {
+  if (!/^[a-f\d]{24}$/i.test(req.params.id)) return res.status(404).end();
+  const a = await Avatar.findById(req.params.id).lean();
+  if (!a) return res.status(404).end();
+  if (req.headers['if-none-match'] === `"${a.hash}"`) return res.status(304).end();
+  res.set({ 'Content-Type': a.mime, ETag: `"${a.hash}"`, 'Cache-Control': 'private, max-age=31536000, immutable', 'Content-Security-Policy': "default-src 'none'" });
+  res.send(Buffer.from(a.data.buffer ?? a.data));
 }));
 
 api.post('/me/consent', wrap(async (req, res) => {
@@ -164,7 +186,7 @@ api.post('/games', createLimiter, wrap(async (req, res) => {
   const allowed = ['name', 'maxPlayers', 'zombieCount', 'durationMin'];
   const patch = Object.fromEntries(Object.entries(body).filter(([k]) => allowed.includes(k)));
   if (patch.name) patch.name = cleanText(patch.name, 40);
-  const r = createRoom({ id: String(req.user._id), displayName: req.user.displayName, avatar: req.user.avatar, photoUrl: req.user.photoUrl }, patch);
+  const r = createRoom({ id: String(req.user._id), displayName: req.user.displayName, avatar: req.user.avatarVer ? avatarUrl(req.user) : '', photoUrl: req.user.photoUrl }, patch);
   if (!r.ok) return res.status(r.code === 'IN_GAME' ? 409 : 400).json({ error: r.error, code: r.code, activeGame: userRoom.get(String(req.user._id)) });
   res.json({ code: r.room.code });
 }));

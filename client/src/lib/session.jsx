@@ -15,7 +15,7 @@ export function SessionProvider({ children }) {
   const toast = useCallback((msg, kind = 'info') => {
     const id = ++tid.current;
     setToasts((t) => [...t.slice(-3), { id, msg, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'danger' ? 7000 : 4500);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'announce' ? 10000 : kind === 'danger' ? 7000 : 4500);
   }, []);
 
   const load = useCallback(async () => {
@@ -35,7 +35,7 @@ export function SessionProvider({ children }) {
     const onC = () => setConn('online'), onD = () => setConn('offline');
     const onErr = () => setConn('offline');
     const onToast = (t) => toast(t.msg, t.kind);
-    const onAnn = (a) => setBanner(a.message);
+    const onAnn = (a) => { setBanner(a.message); toast(a.message, 'announce'); };
     const onEnd = () => { toast('Your session ended. Please sign in again.', 'danger'); setBoot((b) => ({ ...b, user: null })); };
     on('connect', onC); on('disconnect', onD); on('connect_error', onErr); on('toast', onToast); on('announce', onAnn); on('session:ended', onEnd);
     socket.connect();

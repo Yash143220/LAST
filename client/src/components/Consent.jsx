@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 export const CONSENT_ITEMS = [
   { key: 'terms', node: <>I accept the <Link to="/terms" target="_blank" className="underline text-lime">Terms &amp; Conditions</Link>.</> },
   { key: 'privacy', node: <>I have read the <Link to="/privacy" target="_blank" className="underline text-lime">Privacy Policy</Link>.</> },
-  { key: 'location', node: <>I agree that my phone's location is shared with other players in a match (approximately, for opponents).</> },
+  { key: 'location', node: <>I agree that my phone's location is shared with other players in a match (approximately, for opponents) and that, if I use the push-to-talk radio, my live voice is relayed to my teammates only (never recorded).</> },
   { key: 'safety', node: <>I will follow the <Link to="/safety" target="_blank" className="underline text-lime">Safety Rules</Link>: walk, stay outdoors on public pedestrian ground, never enter buildings, roads or railways.</> },
   { key: 'age', node: <>I am 16 or older, or I play with a parent/guardian's permission.</> },
 ];

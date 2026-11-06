@@ -17,7 +17,7 @@ function setup({ players = 4, zombies = 1, settings = {} } = {}) {
     cp('m_resc', 'mission', 100, { missionType: 'rescue' }), cp('s_one', 'supply', 40), cp('x_out', 'extraction', 15),
   ];
   let r = E.applyConfig(room, host.id, {
-    settings: { area: { type: 'circle', center: C, radius: 300 }, allowSimGps: true, hostSafetyConfirmed: true, missionHoldSec: 5, extractionHoldSec: 10, extractionWindowMin: 2, countdownSec: 5, ...settings },
+    settings: { area: { type: 'circle', center: C, radius: 300 }, allowSimGps: true, hostSafetyConfirmed: true, missionHoldSec: 10, extractionHoldSec: 10, extractionWindowMin: 2, countdownSec: 5, hideSec: 0, ...settings },
     checkpoints: cps,
   });
   assert.ok(r.ok, r.error);
@@ -83,7 +83,7 @@ test('mission needs presence + hold; server completes it', () => {
   loc(room, s.id, room.checkpoints.find((c) => c.id === 'm_comms'));
   assert.ok(E.startActivity(room, s.id, 'm_comms').ok);
   E.tick(room); assert.equal(Object.keys(room.missionsDone).length, 0);    // hold not elapsed
-  s.activity.startedEl -= 6000; E.tick(room);
+  s.activity.startedEl -= 11000; E.tick(room);
   assert.ok(room.missionsDone.comms);
   assert.equal(s.score, 100);
   loc(room, s.id, room.checkpoints.find((c) => c.id === 'm_comms'));
@@ -133,18 +133,74 @@ test('QR token expires; manual 6-digit code works', () => {
   assert.ok(E.confirmInfection(room, z.id, sent.code).ok);
 });
 
-test('shield blocks silently; antidote cancels one infection', () => {
+test('shield absorbs one attempt then breaks; zombie is locked out for 30 s; recharge before another', () => {
   const room = run(setup());
   const z = zombiesOf(room)[0], s = survivors(room)[0];
   loc(room, z.id, at(100, 3)); loc(room, s.id, offsetPoint(at(100, 3), 1, 4));
-  s.inventory.shield = 1; assert.ok(E.useItem(room, s.id, 'shield').ok);
-  assert.equal(E.requestInfection(room, z.id).code, 'NO_TARGET');
-  s.shieldUntil = 0; z.infectCd = 0;
+  s.inventory.shield = 2; assert.ok(E.useItem(room, s.id, 'shield').ok);
+  assert.equal(E.useItem(room, s.id, 'shield').ok, false);
+  assert.equal(E.requestInfection(room, z.id).code, 'NO_TARGET');   // zombie is not told why
+  assert.equal(s.shieldUntil, 0);                                   // shield broke after one attempt
+  z.infectCd = 0;
+  assert.equal(E.requestInfection(room, z.id).code, 'NO_TARGET');   // 30 s lockout on that survivor
+  z.locks = {}; z.infectCd = 0;
+  assert.ok(E.requestInfection(room, z.id).ok);                     // after the lockout the attempt goes through
+  assert.match(E.useItem(room, s.id, 'shield').error, /recharging/);// 3 min recharge from activation
+  s.shieldReadyAt = 0; assert.ok(E.useItem(room, s.id, 'shield').ok);
+});
+
+test('antidote: infected holder incubates 2 min, zombie is not told, can do missions, turns only if no cure', () => {
+  const room = run(setup());
+  const z = zombiesOf(room)[0], s = survivors(room)[0];
+  loc(room, z.id, at(100, 3)); loc(room, s.id, offsetPoint(at(100, 3), 1, 4));
   s.inventory.medkit = 1;
-  let sent; E.out.toUser = (r, id, ev, p) => { if (ev === 'infect:incoming') sent = p; };
+  let sent; const toasts = [];
+  E.out.toUser = (r, id, ev, p) => { if (ev === 'infect:incoming') sent = p; if (ev === 'toast') toasts.push([id, p.msg]); };
   assert.ok(E.requestInfection(room, z.id).ok);
   const r = E.confirmInfection(room, z.id, sent.qr);
-  assert.ok(r.resisted); assert.equal(s.status, 'ALIVE'); assert.equal(s.inventory.medkit, 0);
+  assert.deepEqual(r, { ok: true, infected: true, name: s.name });  // zombie sees a normal success, nothing about incubation
+  assert.equal(s.status, 'ALIVE'); assert.equal(s.team, 'survivor'); assert.equal(z.score, 0); // no points yet
+  assert.ok(E.viewFor(room, s.id).me.incubateLeftMs > 100_000);
+  assert.equal(E.viewFor(room, s.id).me.channel, null);              // neither radio channel while incubating
+  assert.equal(E.viewFor(room, z.id).players.find((p) => p.id === s.id).state, 'ALIVE'); // looks like a normal survivor
+  // can still do missions, cannot extract
+  loc(room, s.id, room.checkpoints.find((c) => c.id === 'm_comms'));
+  assert.ok(E.startActivity(room, s.id, 'm_comms').ok);
+  s.activity = null;
+  shift(room, 9 * 60_000); for (const t of ['comms', 'medical', 'power']) room.missionsDone[t] = { by: s.id, byName: s.name, at: 0 };
+  s.incubateUntil = E.elapsed(room) + 60_000;
+  loc(room, s.id, room.checkpoints.find((c) => c.id === 'x_out'));
+  assert.match(E.startActivity(room, s.id, 'x_out').error, /Antidote first/);
+  // cure: manual use, zombies are told, 30 s protection, no points for the zombie
+  assert.ok(E.useItem(room, s.id, 'medkit').ok);
+  assert.equal(s.incubateUntil, 0); assert.equal(s.team, 'survivor'); assert.ok(s.shieldUntil > E.elapsed(room));
+  assert.ok(toasts.some(([id, m]) => id === z.id && /used an antidote/.test(m)));
+  assert.equal(z.score, 0);
+  assert.equal(E.useItem(room, s.id, 'medkit').ok, false);
+});
+
+test('antidote holder who does not drink turns after 2 minutes and the zombie is paid then', () => {
+  const room = run(setup({ settings: { forfeitSignalLossSec: 0 } }));
+  const z = zombiesOf(room)[0], s = survivors(room)[0];
+  loc(room, z.id, at(100, 3)); loc(room, s.id, offsetPoint(at(100, 3), 1, 4));
+  s.inventory.medkit = 1;
+  let qr; E.out.toUser = (r, id, ev, p) => { if (ev === 'infect:incoming') qr = p.qr; };
+  assert.ok(E.requestInfection(room, z.id).ok); assert.ok(E.confirmInfection(room, z.id, qr).ok);
+  assert.equal(E.requestInfection(room, z.id).ok, false);           // cannot be re-infected while incubating
+  shift(room, 121_000); loc(room, s.id, at(100, 4)); E.tick(room);
+  assert.equal(s.status, 'INFECTED'); assert.equal(s.team, 'zombie'); assert.equal(z.score, 100); assert.equal(z.infections, 1);
+  assert.equal(E.viewFor(room, s.id).me.channel, 'zombie');         // now on the zombie radio
+});
+
+test('radio channels: survivors talk to survivors, zombies to zombies, infected join the zombies', () => {
+  const room = run(setup({ players: 5, zombies: 2 }));
+  const s = survivors(room)[0], z = zombiesOf(room)[0];
+  assert.equal(E.channelOf(room, s), 'survivor'); assert.equal(E.channelOf(room, z), 'zombie');
+  assert.equal(E.channelMembers(room, 'survivor').length, 3); assert.equal(E.channelMembers(room, 'zombie').length, 2);
+  s.status = 'INFECTED'; s.team = 'zombie';
+  assert.equal(E.channelOf(room, s), 'zombie'); assert.equal(E.channelMembers(room, 'zombie').length, 3);
+  s.status = 'OUT'; assert.equal(E.channelOf(room, s), null);
+  room.status = 'lobby'; assert.equal(E.channelOf(room, z), null);
 });
 
 test('supplies cost credits, respect radius, limits and cooldown', () => {
@@ -177,9 +233,9 @@ test('zone: shrinks on schedule, penalty only with a good fix after grace', () =
   assert.equal(s.status, 'INFECTED');
 });
 
-test('extraction: needs missions + open window + hold -> survivors win', () => {
-  const room = run(setup());
-  const s = survivors(room)[0];
+test('extraction is personal: escaped survivors are safe, team result is outcome-based', () => {
+  const room = run(setup({ settings: { forfeitSignalLossSec: 0 } }));
+  const [s, s2, s3] = survivors(room);
   const ex = room.checkpoints.find((c) => c.id === 'x_out');
   loc(room, s.id, ex);
   assert.match(E.startActivity(room, s.id, 'x_out').error, /not open/);
@@ -189,8 +245,93 @@ test('extraction: needs missions + open window + hold -> survivors win', () => {
   for (const t of ['comms', 'medical', 'power']) room.missionsDone[t] = { by: s.id, byName: s.name, at: 0 };
   assert.ok(E.startActivity(room, s.id, 'x_out').ok);
   s.activity.startedEl -= 11_000; E.tick(room);
-  assert.equal(room.status, 'finished'); assert.equal(room.winner, 'survivors'); assert.equal(room.reason, 'extraction');
+  assert.equal(s.status, 'ESCAPED');
+  assert.equal(room.status, 'running');                     // one escape does NOT end the match
+  assert.equal(E.viewFor(room, s2.id).counts.escaped, 1);
+  const z = zombiesOf(room)[0];
+  assert.equal(E.requestInfection(room, z.id).ok, false);   // escaped players cannot be targeted
+  // all remaining survivors leave -> only 1 of 3 succeeded (needs 50% = 2) -> zombies win, escapee keeps a consolation bonus
+  E.leaveRoom(room, s2.id); E.leaveRoom(room, s3.id);
+  assert.equal(room.winner, 'zombies'); assert.equal(room.reason, 'too_few');
+  const mine = room.result.players.find((p) => p.userId === s.id);
+  assert.equal(mine.outcome, 'ESCAPED'); assert.equal(mine.bonus, 50); assert.equal(mine.won, false);
   assert.equal(E.userRoom.size, 0);
+});
+
+test('survivors win when enough escape or survive; everyone escaping ends the match', () => {
+  const a = run(setup({ settings: { forfeitSignalLossSec: 0 } }));
+  const [s1, s2, s3] = survivors(a);
+  s1.status = 'ESCAPED'; s2.status = 'ESCAPED';
+  s3.status = 'INFECTED'; s3.team = 'zombie'; s3.infectedEl = 1000;
+  E.checkWin(a);
+  assert.equal(a.winner, 'survivors'); assert.equal(a.reason, 'extraction');
+  assert.equal(a.result.players.find((p) => p.userId === s1.id).won, true);
+  assert.equal(a.result.players.find((p) => p.userId === s3.id).outcome, 'TURNED');
+  assert.equal(a.result.players.find((p) => p.userId === s3.id).won, false);
+});
+
+test('zombie win: infected players share it with a bonus scaled by how long they lasted', () => {
+  const room = run(setup({ players: 4, settings: { forfeitSignalLossSec: 0 } }));
+  const [early, late, last] = survivors(room);
+  const dur = 10 * 60_000;
+  for (const [p, t] of [[early, 1000], [late, 0.75 * dur], [last, 0.75 * dur]]) { p.status = 'INFECTED'; p.team = 'zombie'; p.infectedEl = t; }
+  E.checkWin(room);
+  assert.equal(room.winner, 'zombies'); assert.equal(room.reason, 'all_infected');
+  const by = (p) => room.result.players.find((x) => x.userId === p.id);
+  assert.equal(by(late).bonus, 100);                       // survived long -> full share
+  assert.ok(by(early).bonus >= 25 && by(early).bonus < 40); // infected at once -> ~25
+  assert.equal(by(zombiesOf(room).find((z) => z.origin === 'zombie')).bonus, 100);
+  assert.ok(room.result.players.every((p) => p.outcome));
+});
+
+test('hide phase: zombies cannot infect, hints start after release, first hint is short-lived', () => {
+  const room = run(setup({ settings: { hideSec: 90, firstHintSec: 10, revealIntervalSec: 120 } }));
+  const z = zombiesOf(room)[0], s = survivors(room)[0];
+  loc(room, z.id, at(100, 3)); loc(room, s.id, offsetPoint(at(100, 3), 1, 3));
+  assert.equal(E.requestInfection(room, z.id).code, 'HIDE');
+  assert.equal(E.viewFor(room, z.id).hints.list.length, 0);
+  assert.ok(E.viewFor(room, z.id).hide.leftMs > 80_000);
+  shift(room, 91_000); loc(room, z.id, at(100, 3)); loc(room, s.id, offsetPoint(at(100, 3), 1, 3)); E.tick(room);
+  const v = E.viewFor(room, z.id);
+  assert.equal(v.hints.list.length, 1); assert.ok(v.hints.list[0].leftMs <= 10_000);
+  assert.ok(v.hints.nextInMs > 100_000);                  // regular timing counts from the release
+  shift(room, 11_000); loc(room, z.id, at(100, 3)); loc(room, s.id, offsetPoint(at(100, 3), 1, 3)); E.tick(room);
+  assert.equal(E.viewFor(room, z.id).hints.list.length, 0); // first hint has faded
+  assert.ok(E.requestInfection(room, z.id).ok);
+});
+
+test('objectives show who is working (noisy objectives), anonymous to zombies', () => {
+  const room = run(setup({ settings: { noisyObjectives: true } }));
+  const s = survivors(room)[0], z = zombiesOf(room)[0];
+  loc(room, s.id, room.checkpoints.find((c) => c.id === 'm_comms'));
+  assert.ok(E.startActivity(room, s.id, 'm_comms').ok);
+  const vz = E.viewFor(room, z.id);
+  assert.equal(vz.activities.length, 1); assert.equal(vz.activities[0].cpId, 'm_comms'); assert.ok(!('by' in vz.activities[0]));
+  room.settings.noisyObjectives = false;
+  assert.equal(E.viewFor(room, z.id).activities.length, 0);
+  assert.equal(E.viewFor(room, s.id).activities.length, 1);
+});
+
+test('free supply mode: no credits, limited stock that refills', () => {
+  const room = run(setup({ settings: { supplyMode: 'free', supplyStock: 2, supplyRefillSec: 60 } }));
+  const s = survivors(room)[0];
+  loc(room, s.id, room.checkpoints.find((c) => c.id === 's_one'));
+  s.credits = 0;
+  assert.ok(E.buyItem(room, s.id, 's_one', 'radar').ok); assert.equal(s.credits, 0);
+  s.supplyCd = {}; assert.ok(E.buyItem(room, s.id, 's_one', 'energy').ok);
+  s.supplyCd = {}; assert.equal(E.buyItem(room, s.id, 's_one', 'radar').code, 'EMPTY');
+  assert.equal(E.viewFor(room, s.id).supplyStock.s_one, 0);
+  shift(room, 61_000); loc(room, s.id, room.checkpoints.find((c) => c.id === 's_one')); E.tick(room);
+  assert.equal(E.viewFor(room, s.id).supplyStock.s_one, 1);
+});
+
+test('timer rules: mission/extraction at least 60 s outside practice mode', () => {
+  const { room } = E.createRoom(U(70), { name: 'Rules test' });
+  const area = { type: 'circle', center: C, radius: 300 };
+  assert.equal(E.applyConfig(room, 'u70', { settings: { area, missionHoldSec: 30 } }).ok, false);
+  assert.ok(E.applyConfig(room, 'u70', { settings: { area, missionHoldSec: 300, extractionHoldSec: 180 } }).ok);
+  assert.equal(E.applyConfig(room, 'u70', { settings: { extractionHoldSec: 181 } }).ok, false);
+  assert.ok(E.applyConfig(room, 'u70', { settings: { allowSimGps: true, missionHoldSec: 10 } }).ok);
 });
 
 test('timer end gives survivors the win; all infected gives zombies the win', () => {
@@ -214,7 +355,7 @@ test('pause freezes the clock; resume continues', () => {
 });
 
 test('simulated GPS is rejected unless the host allows it; location hints are fuzzed and periodic', () => {
-  const room = setup({ settings: { allowSimGps: false } });
+  const room = setup({ settings: { allowSimGps: false, missionHoldSec: 60, extractionHoldSec: 60 } });
   run(room);
   const s = survivors(room)[0];
   assert.equal(E.updateLocation(room, s.id, { ...at(10), acc: 5, sim: true }).code, 'SIM_DISABLED');

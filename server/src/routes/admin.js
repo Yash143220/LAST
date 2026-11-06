@@ -1,7 +1,7 @@
 import os from 'node:os';
 import { Router } from 'express';
 import mongoose from 'mongoose';
-import { requireAuth, requireAdmin, isAdminUser } from '../auth.js';
+import { requireAuth, requireAdmin, isAdminUser, avatarUrl } from '../auth.js';
 import { User, Game, GameResult, Report, Audit } from '../models.js';
 import { rooms, summary, viewFor, pause, resume, terminate, leaveRoom, userRoom } from '../engine.js';
 import { audit, deleteAccount, getAppSettings, setAppSettings } from '../services.js';
@@ -71,7 +71,7 @@ admin.get('/users', wrap(async (req, res) => {
   if (req.query.filter === 'suspended') q.suspended = true;
   if (req.query.filter === 'admin') q.role = 'admin';
   const [rows, total] = await Promise.all([User.find(q).sort({ createdAt: -1 }).skip((pg - 1) * limit).limit(limit).select('-avatar').lean(), User.countDocuments(q)]);
-  res.json({ total, page: pg, rows: rows.map((u) => ({ id: String(u._id), email: u.email, name: u.name, displayName: u.displayName, photoUrl: u.photoUrl, role: u.role, suspended: u.suspended, suspendedReason: u.suspendedReason, createdAt: u.createdAt, lastLoginAt: u.lastLoginAt, stats: u.stats, inGame: userRoom.get(String(u._id)) || null, isDev: u.isDev })) });
+  res.json({ total, page: pg, rows: rows.map((u) => ({ id: String(u._id), email: u.email, name: u.name, displayName: u.displayName, photoUrl: avatarUrl(u), role: u.role, suspended: u.suspended, suspendedReason: u.suspendedReason, createdAt: u.createdAt, lastLoginAt: u.lastLoginAt, stats: u.stats, inGame: userRoom.get(String(u._id)) || null, isDev: u.isDev })) });
 }));
 admin.get('/users/:id', wrap(async (req, res) => {
   if (!/^[a-f\d]{24}$/i.test(req.params.id)) return res.status(404).json({ error: 'Not found.' });

@@ -50,3 +50,6 @@ input[type='checkbox'] { accent-color: var(--color-brand); }
 @keyframes reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 .reveal { animation: reveal 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
 @media (prefers-reduced-motion: reduce) { *, *::after { animation: none !important; transition: none !important; } }
+
+@keyframes glow { 0%, 100% { box-shadow: 0 0 6px 1px var(--glow, #88cec6); transform: scale(1); } 50% { box-shadow: 0 0 18px 6px var(--glow, #88cec6); transform: scale(1.08); } }
+.pin-busy { animation: glow 1.1s ease-in-out infinite; }

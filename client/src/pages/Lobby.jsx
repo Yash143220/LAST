@@ -18,7 +18,7 @@ export default function Lobby({ state }) {
 
   const act = async (ev, payload, label) => { setBusy(label || ev); const r = await emit(ev, payload); setBusy(''); if (!r.ok) toast(r.error, 'warn'); return r; };
   const share = async () => {
-    try { if (navigator.share) await navigator.share({ title: 'Operation: Outbreak', text: `Join my match with code ${state.code}`, url: link }); else { await navigator.clipboard.writeText(link); toast('Invite link copied.', 'good'); } } catch { /* cancelled */ }
+    try { if (navigator.share) await navigator.share({ title: 'Humans: The Last Alive', text: `Join my match with code ${state.code}`, url: link }); else { await navigator.clipboard.writeText(link); toast('Invite link copied.', 'good'); } } catch { /* cancelled */ }
   };
   const check = async () => { setBusy('gps'); setGps(await askLocation()); setBusy(''); };
   const doLeave = async () => { const r = await emit('game:leave'); if (r.ok) { setActiveGame(null); nav('/'); } else toast(r.error, 'warn'); };
@@ -69,6 +69,7 @@ export default function Lobby({ state }) {
         <h2 className="font-display text-2xl font-bold mb-1">Match rules</h2>
         <div className="flex justify-between"><span className="text-sage">Length</span><span>{s.durationMin} min</span></div>
         <div className="flex justify-between"><span className="text-sage">Play area</span><span className="flex items-center gap-1"><MapPin className="size-4 text-lime" />{area}</span></div>
+        {s.hideSec > 0 && <div className="flex justify-between"><span className="text-sage">Zombie waiting time</span><span>{s.hideSec} s</span></div>}
         <div className="flex justify-between"><span className="text-sage">Missions needed to extract</span><span>{s.requiredMissions}</span></div>
         <div className="flex justify-between"><span className="text-sage">Infection range</span><span>~{s.infectionRange} m + QR scan</span></div>
         <div className="flex justify-between"><span className="text-sage">Safe zone</span><span>{s.shrink ? 'shrinks over time' : 'fixed'}</span></div>

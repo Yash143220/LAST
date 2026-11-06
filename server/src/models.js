@@ -9,7 +9,8 @@ const userSchema = new Schema(
     name: { type: String, default: '' },             // real name from Google (private)
     displayName: { type: String, required: true, maxlength: 20 }, // public callsign
     photoUrl: { type: String, default: '' },         // Google profile photo
-    avatar: { type: String, default: '' },           // custom upload (data URL, resized client-side)
+    avatar: { type: String, default: '' },           // LEGACY inline data URL - migrated to the Avatar collection at startup
+    avatarVer: { type: String, default: '' },        // hash of the stored picture (cache-busting); '' = none
     role: { type: String, enum: ['player', 'admin'], default: 'player' },
     suspended: { type: Boolean, default: false },
     suspendedReason: { type: String, default: '' },
@@ -68,7 +69,7 @@ const resultSchema = new Schema(
     players: [
       {
         userId: String, name: String, avatar: String,
-        startRole: String, endRole: String, status: String,
+        startRole: String, endRole: String, status: String, outcome: String, won: Boolean, bonus: Number,
         score: Number, missions: Number, infections: Number, extracted: Boolean,
       },
     ],
@@ -110,7 +111,11 @@ const auditSchema = new Schema({
 
 const settingSchema = new Schema({ _id: String, value: Schema.Types.Mixed });
 
+// One small image per user, stored once and served by URL (never embedded in game state or results).
+const avatarSchema = new Schema({ _id: String, mime: String, hash: String, data: Buffer, updatedAt: { type: Date, default: Date.now } });
+
 export const User = model('User', userSchema);
+export const Avatar = model('Avatar', avatarSchema);
 export const Game = model('Game', gameSchema);
 export const GameResult = model('GameResult', resultSchema);
 export const Report = model('Report', reportSchema);
