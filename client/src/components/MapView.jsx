@@ -174,7 +174,7 @@ export default forwardRef(function MapView({
 
   return (
     <div className={`relative isolate z-0 ${className || ''}`}>
-      <div ref={box} className="absolute inset-0 bg-bg" />
+      <div ref={box} className="h-full w-full bg-bg" />
       {[...markers.current.entries()].map(([id, m]) => byId.get(id) && createPortal(byId.get(id).node, m.el, id))}
       {controls && ready && (
         <div className={`absolute ${controlsClass} flex flex-col gap-2 z-10`}>
